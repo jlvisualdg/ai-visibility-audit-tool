@@ -1,0 +1,16 @@
+# env
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# output
+output/*.html
+!output/.gitkeep
+
+# editor
+.vscode/
+.idea/
+.DS_Store

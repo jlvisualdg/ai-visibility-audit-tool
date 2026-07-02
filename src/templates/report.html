@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Visibility Audit — {{ report.domain }}</title>
+<style>
+:root {
+    --bg-primary: #0a0e27;
+    --bg-card: #111640;
+    --bg-card-hover: #161b4d;
+    --text-primary: #e0e6ff;
+    --text-muted: #8892c0;
+    --text-accent: #00d4ff;
+    --text-accent-dim: #0099bb;
+    --green: #00f5a0;
+    --orange: #ff8c42;
+    --red: #ff4757;
+    --yellow: #ffd93d;
+    --border: #1e2559;
+    --gradient-1: linear-gradient(135deg, #00d4ff 0%, #7c3aed 100%);
+    --gradient-2: linear-gradient(135deg, #00f5a0 0%, #00d4ff 100%);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.6;
+    padding: 0;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 24px;
+}
+
+/* Header */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+}
+
+.logo {
+    font-size: 18px;
+    font-weight: 600;
+    background: var(--gradient-1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.copy-link {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-accent);
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.copy-link:hover {
+    background: var(--bg-card-hover);
+}
+
+/* Audit summary */
+.summary {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+    margin-bottom: 32px;
+}
+
+.summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.domain-name {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--text-accent);
+    margin-bottom: 4px;
+}
+
+.summary-meta {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.summary-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.metric {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.metric-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.metric-value {
+    font-size: 36px;
+    font-weight: 700;
+    background: var(--gradient-2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.metric-value.warn {
+    background: linear-gradient(135deg, #ff8c42 0%, #ff4757 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+}
+
+/* Section */
+.section {
+    margin-bottom: 40px;
+}
+
+.section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.section-number {
+    font-size: 14px;
+    color: var(--text-muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+.section-title {
+    font-size: 22px;
+    font-weight: 600;
+}
+
+/* Strategic read */
+.strategic {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-accent);
+    border-radius: 12px;
+    padding: 28px;
+    margin-bottom: 32px;
+}
+
+.strategic-label {
+    color: var(--text-accent);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.strategic-title {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.strategic-summary {
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    font-size: 16px;
+}
+
+.strategic-play {
+    background: var(--bg-primary);
+    border-radius: 8px;
+    padding: 16px;
+    border-left: 3px solid var(--green);
+}
+
+.strategic-play-label {
+    color: var(--green);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.strategic-play-text {
+    color: var(--text-primary);
+    font-size: 15px;
+}
+
+/* Citation matrix table */
+.matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.matrix-table th,
+.matrix-table td {
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+}
+
+.matrix-table th {
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+}
+
+.matrix-table tr:last-child td {
+    border-bottom: none;
+}
+
+.matrix-table tr:hover {
+    background: var(--bg-card-hover);
+}
+
+.covered-yes {
+    color: var(--green);
+    font-weight: 600;
+}
+
+.covered-no {
+    color: var(--red);
+}
+
+.covered-partial {
+    color: var(--yellow);
+}
+
+.cited-sources {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: block;
+    margin-top: 4px;
+}
+
+/* Crawl signal cards */
+.signal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.signal-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.signal-value {
+    font-size: 28px;
+    font-weight: 700;
+    background: var(--gradient-2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 4px;
+}
+
+.signal-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.health-score {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.health-score-value {
+    font-size: 64px;
+    font-weight: 800;
+    background: var(--gradient-2);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+}
+
+.health-score-label {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 8px;
+}
+
+/* Issues */
+.issues-list {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.issue {
+    display: flex;
+    align-items: flex-start;
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+}
+
+.issue:last-child { border-bottom: none; }
+
+.issue-severity {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    letter-spacing: 0.5px;
+}
+
+.severity-critical { background: rgba(255, 71, 87, 0.15); color: var(--red); }
+.severity-high     { background: rgba(255, 140, 66, 0.15); color: var(--orange); }
+.severity-medium   { background: rgba(255, 217, 61, 0.15); color: var(--yellow); }
+.severity-low      { background: rgba(0, 212, 255, 0.15); color: var(--text-accent); }
+
+.issue-text {
+    color: var(--text-primary);
+    font-size: 14px;
+    flex: 1;
+}
+
+/* Fix cards */
+.fix-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--orange);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 12px;
+}
+
+.fix-card.priority-HIGH { border-left-color: var(--red); }
+.fix-card.priority-MEDIUM { border-left-color: var(--orange); }
+.fix-card.priority-LOW { border-left-color: var(--text-accent); }
+
+.fix-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.fix-priority {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+}
+
+.priority-HIGH .fix-priority { background: rgba(255, 71, 87, 0.15); color: var(--red); }
+.priority-MEDIUM .fix-priority { background: rgba(255, 140, 66, 0.15); color: var(--orange); }
+.priority-LOW .fix-priority { background: rgba(0, 212, 255, 0.15); color: var(--text-accent); }
+
+.fix-tag {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(0, 245, 160, 0.12);
+    color: var(--green);
+    letter-spacing: 0.5px;
+}
+
+.fix-agent {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: rgba(124, 58, 237, 0.15);
+    color: #a78bfa;
+    letter-spacing: 0.5px;
+    margin-left: auto;
+}
+
+.fix-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.fix-step {
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+/* Topics + blueprints */
+.topics-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.topic-chip {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: var(--text-accent);
+}
+
+.blueprint {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 12px;
+}
+
+.blueprint-format {
+    font-size: 14px;
+    color: var(--text-accent);
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.blueprint-meta {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.blueprint-move {
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+/* Competitor list */
+.competitor-list {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.competitor-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+}
+
+.competitor-row:last-child { border-bottom: none; }
+
+.competitor-domain { color: var(--text-primary); }
+.competitor-count {
+    color: var(--text-accent);
+    font-weight: 600;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Engine note */
+.engine-note {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 24px;
+}
+
+.engine-note strong { color: var(--text-accent); }
+
+.engine-note ul {
+    margin-top: 8px;
+    padding-left: 20px;
+}
+
+.engine-note li { margin-bottom: 4px; }
+
+/* CTA */
+.cta {
+    background: var(--bg-card);
+    border: 1px solid var(--text-accent);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    margin-top: 40px;
+}
+
+.cta-title {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.cta-text {
+    color: var(--text-muted);
+    margin-bottom: 20px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.cta-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.cta-button {
+    background: var(--gradient-1);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.2s;
+    display: inline-block;
+}
+
+.cta-button:hover { opacity: 0.9; transform: translateY(-1px); }
+
+.cta-button.secondary {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+}
+
+/* Footer */
+.footer {
+    margin-top: 60px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.8;
+}
+
+.footer strong { color: var(--text-primary); }
+
+@media (max-width: 640px) {
+    .container { padding: 24px 16px; }
+    .domain-name { font-size: 24px; }
+    .summary-metrics, .signal-grid { grid-template-columns: 1fr; }
+    .matrix-table { font-size: 12px; }
+    .matrix-table th, .matrix-table td { padding: 10px 8px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="header">
+    <div class="logo">AI VISIBILITY AUDIT</div>
+    <button class="copy-link" onclick="navigator.clipboard.writeText(window.location.href); this.textContent='Link copied!'">Copy link</button>
+</header>
+
+<section class="summary">
+    <div class="summary-header">
+        <div>
+            <div class="domain-name">{{ report.domain }}</div>
+            <div class="summary-meta">Generated {{ generated_at }}{% if report.crawl_signals.title %} · {{ report.crawl_signals.title }}{% endif %}</div>
+        </div>
+    </div>
+    <div class="summary-metrics">
+        <div class="metric">
+            <div class="metric-label">AI Coverage</div>
+            <div class="metric-value {% if report.ai_coverage_pct < 25 %}warn{% endif %}">{{ '%.0f' % report.ai_coverage_pct }}%</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Fixable Gaps</div>
+            <div class="metric-value">{{ report.fixable_gaps }}</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Pages Crawled</div>
+            <div class="metric-value">{{ report.crawl_signals.total_pages }}</div>
+        </div>
+        <div class="metric">
+            <div class="metric-label">Buyer Topics</div>
+            <div class="metric-value">{{ report.buyer_topics|length }}</div>
+        </div>
+    </div>
+</section>
+
+<div class="strategic">
+    <div class="strategic-label">The strategic read</div>
+    <h2 class="strategic-title">{{ report.strategic_read.title }}</h2>
+    <p class="strategic-summary">{{ report.strategic_read.summary }}</p>
+    <div class="strategic-play">
+        <div class="strategic-play-label">The play</div>
+        <p class="strategic-play-text">{{ report.strategic_read.the_play }}</p>
+    </div>
+</div>
+
+{% if report.citation_matrix.results %}
+<section class="section">
+    <div class="section-header">
+        <span class="section-number">{% if not no_ai %}01{% else %}—{% endif %}</span>
+        <h2 class="section-title">Citation matrix</h2>
+    </div>
+    <div class="engine-note">
+        <strong>Engines used:</strong>
+        <ul>
+        {% for r in report.citation_matrix.results|map(attribute='engine')|unique %}
+            <li>{{ r }} — {% if '(mock)' in r %}<em>mock mode (no API call made)</em>{% else %}<em>real API call</em>{% endif %}</li>
+        {% endfor %}
+        </ul>
+        <div style="margin-top: 8px;">Coverage shows pass-level: <strong style="color: var(--green);">GREEN</strong> = cited in all passes · <strong style="color: var(--yellow);">YELLOW</strong> = cited in some · <strong style="color: var(--red);">RED</strong> = not cited.</div>
+    </div>
+    <table class="matrix-table">
+        <thead>
+            <tr>
+                <th>Topic</th>
+                {% for engine in report.citation_matrix.engines %}
+                    <th>{{ engine|replace(' (mock)', '') }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for topic in report.buyer_topics %}
+            <tr>
+                <td><strong>{{ topic }}</strong></td>
+                {% for engine in report.citation_matrix.engines %}
+                    {% set cell = report.citation_matrix.result_for(topic, engine) %}
+                    {% if cell %}
+                        {% if cell.coverage_rate >= 0.99 %}
+                            <td class="covered-yes">✓ Cited<span class="cited-sources">{{ cell.cited_sources|length }} sources</span></td>
+                        {% elif cell.coverage_rate > 0 %}
+                            <td class="covered-partial">~ {{ '%.0f' % (cell.coverage_rate * 100) }}%<span class="cited-sources">{{ cell.cited_sources|length }} sources</span></td>
+                        {% else %}
+                            <td class="covered-no">✗ Not cited<span class="cited-sources">{% for s in cell.cited_sources[:3] %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %}</span></td>
+                        {% endif %}
+                    {% else %}
+                        <td class="covered-no">—</td>
+                    {% endif %}
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if report.citation_matrix.all_competitors %}
+    <h3 style="margin-top: 24px; margin-bottom: 12px; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Top cited competitors</h3>
+    <div class="competitor-list">
+        {% for domain, count in report.citation_matrix.all_competitors.items() %}
+            {% if loop.index <= 8 %}
+            <div class="competitor-row">
+                <span class="competitor-domain">{{ domain }}</span>
+                <span class="competitor-count">{{ count }}</span>
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+
+<section class="section">
+    <div class="section-header">
+        <span class="section-number">{% if report.citation_matrix.results %}02{% else %}01{% endif %}</span>
+        <h2 class="section-title">Crawl signals</h2>
+    </div>
+    <div class="signal-grid">
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.answer_capsules }}</div>
+            <div class="signal-label">Answer capsules</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ '%.1f' % report.crawl_signals.stat_density }}</div>
+            <div class="signal-label">Stats per 100 words</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.authorship_pages }}/{{ report.crawl_signals.total_pages }}</div>
+            <div class="signal-label">Pages with authorship</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.schema_pages }}/{{ report.crawl_signals.total_pages }}</div>
+            <div class="signal-label">Pages with schema</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.thin_pages|length }}</div>
+            <div class="signal-label">Thin pages (&lt;300 words)</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{% if report.crawl_signals.has_ai_txt %}✓{% else %}—{% endif %}</div>
+            <div class="signal-label">/ai.txt present</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{% if report.crawl_signals.has_llms_txt %}✓{% else %}—{% endif %}</div>
+            <div class="signal-label">/llms.txt present</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{% if report.crawl_signals.robots_blocks_ai %}⚠{% else %}✓{% endif %}</div>
+            <div class="signal-label">Robots allows AI bots</div>
+        </div>
+    </div>
+
+    <div class="health-score">
+        <div class="health-score-value">{{ report.crawl_signals.health_score }}</div>
+        <div class="health-score-label">Crawl Health Score</div>
+    </div>
+
+    {% if report.crawl_signals.issues %}
+    <h3 style="margin-bottom: 12px; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Crawl issues ({{ report.crawl_signals.issues|length }})</h3>
+    <div class="issues-list">
+        {% for issue in report.crawl_signals.issues %}
+        <div class="issue">
+            <span class="issue-severity severity-{{ issue.severity }}">{{ issue.severity }}</span>
+            <span class="issue-text">{{ issue.detail }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+
+<section class="section">
+    <div class="section-header">
+        <span class="section-number">{% if report.citation_matrix.results %}03{% else %}02{% endif %}</span>
+        <h2 class="section-title">Prioritized fixes</h2>
+    </div>
+    {% for fix in report.fixes %}
+    <div class="fix-card priority-{{ fix.priority }}">
+        <div class="fix-header">
+            <span class="fix-priority">{{ fix.priority }}</span>
+            <span class="fix-tag">{{ fix.tag }}</span>
+            {% if fix.agent_fixable %}<span class="fix-agent">AGENT-FIXABLE</span>{% endif %}
+        </div>
+        <div class="fix-title">{{ fix.title }}</div>
+        <div class="fix-step">{{ fix.first_step }}</div>
+    </div>
+    {% endfor %}
+</section>
+
+{% if report.buyer_topics %}
+<section class="section">
+    <div class="section-header">
+        <span class="section-number">{% if report.citation_matrix.results %}04{% else %}03{% endif %}</span>
+        <h2 class="section-title">Buyer topics to own</h2>
+    </div>
+    <div class="topics-list">
+        {% for topic in report.buyer_topics %}
+            <span class="topic-chip">{{ topic }}</span>
+        {% endfor %}
+    </div>
+    <h3 style="margin-top: 24px; margin-bottom: 12px; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Recommended content formats</h3>
+    {% for key, bp in report.page_blueprints.items() %}
+    <div class="blueprint">
+        <div class="blueprint-format">{{ bp.format }}</div>
+        <div class="blueprint-meta">Length: {{ bp.word_count_range }}</div>
+        <div class="blueprint-move"><strong style="color: var(--text-accent);">First move:</strong> {{ bp.first_move }}</div>
+    </div>
+    {% endfor %}
+</section>
+{% endif %}
+
+<div class="cta">
+    <div class="cta-title">That's the diagnosis.</div>
+    <p class="cta-text">Want a content team to execute these fixes and run this audit monthly? Book a workshop.</p>
+    <div class="cta-buttons">
+        <a class="cta-button" href="https://boringmarketer.com/workshops">Book a workshop</a>
+        <a class="cta-button secondary" href="https://boringmarketer.com/audit">Get another audit</a>
+    </div>
+</div>
+
+<footer class="footer">
+    <p><strong>AI Visibility Audit</strong> — generated by aeo-audit-tool v0.1</p>
+    <p>Citations were checked by querying AI engines and inspecting the cited source lists returned by each. Coverage figures reflect what the engines surfaced at the time of audit, not what could be true in a different prompt or pass. v1 uses substring matching for brand detection — paraphrased or misspelled citations may be missed.</p>
+    <p style="margin-top: 12px;">"Gemini API with Google Search grounding" (when wired) is a programmatic proxy for Google AI Overviews, not a measurement of AI Overviews itself. See the README for details.</p>
+</footer>
+
+</div>
+</body>
+</html>
