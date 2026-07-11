@@ -279,20 +279,7 @@ def _generate_fixes(
             agent_fixable=True,
         ))
 
-    # LOW: no ai.txt / llms_txt
-    if not crawl.has_ai_txt:
-        fixes.append(FixRecommendation(
-            title="Publish an /ai.txt access policy",
-            priority="LOW",
-            tag="RECOMMENDED",
-            first_step=(
-                "Create /ai.txt declaring your policy for AI crawlers (GPTBot, ClaudeBot, "
-                "PerplexityBot, Google-Extended). Even a permissive policy is a signal — "
-                "see aietxt.org for the spec."
-            ),
-            agent_fixable=True,
-        ))
-
+    # LOW: no llms_txt
     if not crawl.has_llms_txt:
         fixes.append(FixRecommendation(
             title="Publish a /llms.txt site summary",
@@ -313,9 +300,9 @@ def _generate_fixes(
             priority="HIGH",
             tag="CRITICAL",
             first_step=(
-                "Your robots.txt currently disallows one or more of GPTBot, ClaudeBot, "
-                "or PerplexityBot. This is the single biggest reason AI engines can't "
-                "cite your content. Add explicit Allow rules for these user-agents."
+                f"Your robots.txt blocks {crawl.ai_bots_blocked} of {crawl.ai_bots_blocked + crawl.ai_bots_allowed} "
+                f"tracked AI crawlers. Only {crawl.ai_bots_allowed} are explicitly allowed. "
+                f"Add explicit Allow rules for the blocked ones."
             ),
             agent_fixable=True,
         ))

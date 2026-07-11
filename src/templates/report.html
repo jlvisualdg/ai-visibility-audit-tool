@@ -709,6 +709,51 @@ body {
 </section>
 {% endif %}
 
+{% if report.citation_matrix.results %}
+<section class="section">
+    <div class="section-header">
+        <span class="section-number">01b</span>
+        <h2 class="section-title">Competitive landscape</h2>
+    </div>
+    <p class="section-subtitle">For each query, who owns the answer space — and where does {{ report.domain }} rank?</p>
+
+    <div class="matrix-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Query</th>
+                    <th>Result</th>
+                    <th>Mentions</th>
+                    <th>Citations</th>
+                    <th>1st Position</th>
+                    <th>Top Competitor</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for result in report.citation_matrix.results %}
+                {% if 'perplexity' in result.engine|lower and '(mock)' not in result.engine|lower %}
+                <tr>
+                    <td class="topic-cell">{{ result.topic }}</td>
+                    <td>
+                        {% if result.covered %}
+                        <span class="badge badge-covered">HIT</span>
+                        {% else %}
+                        <span class="badge badge-missed">MISS</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ result.best_brand_mentions }}×</td>
+                    <td>{{ result.best_url_citations }}×</td>
+                    <td>{% if result.best_first_section %}#{{ result.best_first_section }}{% else %}—{% endif %}</td>
+                    <td>{{ result.top_competitor or '—' }}</td>
+                </tr>
+                {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
 <section class="section">
     <div class="section-header">
         <span class="section-number">{% if report.citation_matrix.results %}02{% else %}01{% endif %}</span>
@@ -736,16 +781,52 @@ body {
             <div class="signal-label">Thin pages (&lt;300 words)</div>
         </div>
         <div class="signal-card">
-            <div class="signal-value">{% if report.crawl_signals.has_ai_txt %}✓{% else %}—{% endif %}</div>
-            <div class="signal-label">/ai.txt present</div>
-        </div>
-        <div class="signal-card">
             <div class="signal-value">{% if report.crawl_signals.has_llms_txt %}✓{% else %}—{% endif %}</div>
             <div class="signal-label">/llms.txt present</div>
         </div>
         <div class="signal-card">
-            <div class="signal-value">{% if report.crawl_signals.robots_blocks_ai %}⚠{% else %}✓{% endif %}</div>
-            <div class="signal-label">Robots allows AI bots</div>
+            <div class="signal-value">{% if report.crawl_signals.robots_blocks_ai %}⚠{% else %}{{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }}{% endif %}</div>
+            <div class="signal-label">AI bots allowed</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.schema_types_found|length }}</div>
+            <div class="signal-label">Schema types found</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.avg_response_ms }}ms</div>
+            <div class="signal-label">Avg response time</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ '%.0f' % report.crawl_signals.total_size_kb }}KB</div>
+            <div class="signal-label">Total page weight</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{% if report.crawl_signals.has_about_page %}✓{% else %}—{% endif %}</div>
+            <div class="signal-label">About page</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{% if report.crawl_signals.has_contact_page %}✓{% else %}—{% endif %}</div>
+            <div class="signal-label">Contact page</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.max_redirect_hops }}</div>
+            <div class="signal-label">Max redirect hops</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.broken_links|length }}</div>
+            <div class="signal-label">Pages with broken links</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.avg_agent_readability }}</div>
+            <div class="signal-label">Agent readability score</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.pages_with_landmarks }}/{{ report.crawl_signals.total_pages }}</div>
+            <div class="signal-label">Pages with landmarks</div>
+        </div>
+        <div class="signal-card">
+            <div class="signal-value">{{ report.crawl_signals.total_images_missing_alt }}</div>
+            <div class="signal-label">Images missing alt text</div>
         </div>
     </div>
 

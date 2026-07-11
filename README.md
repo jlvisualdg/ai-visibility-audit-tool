@@ -116,7 +116,7 @@ data using a heuristic baseline. Examples:
   anchor text"
 - If `ai_coverage_pct == 0` → HIGH: Strategic read about building
   topical authority
-- If `not has_ai_txt` → LOW: "No ai.txt found"
+
 
 Each fix has a `priority` (HIGH / MEDIUM / LOW), a `tag`
 (WORTH CITING / FOUNDATION / RECOMMENDED), a one-line `first_step`,

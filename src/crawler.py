@@ -12,13 +12,14 @@ actually correlate with AI engine citation rates:
 - schema (JSON-LD / microdata)
 - health_score (composite)
 - thin_pages, missing_anchor_text, question_headings
-- has_ai_txt, has_llms_txt, robots_blocks_ai
+- has_llms_txt, robots_blocks_ai
 """
 
 from __future__ import annotations
 
 import re
 import time
+import json
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from urllib.parse import urljoin, urlparse
@@ -66,14 +67,31 @@ STAT_RE = re.compile(
 AI_BOT_USER_AGENTS = [
     "GPTBot",
     "ChatGPT-User",
+    "OpenAI",
+    "OAI-SearchBot",
     "Claude-Web",
     "ClaudeBot",
-    "PerplexityBot",
-    "Google-Extended",
-    "Applebot-Extended",
-    "CCBot",
     "anthropic-ai",
+    "PerplexityBot",
+    "Perplexity-User",
+    "Google-Extended",
+    "Google-CloudVertexBot",
+    "Applebot-Extended",
+    "Amazonbot",
     "Bytespider",
+    "CCBot",
+    "cohere-ai",
+    "FacebookExternalHit",
+    "magpie-crawler",
+    "meta-externalagent",
+    "omgili",
+    "omgilibot",
+    "PetalBot",
+    "Scrapy",
+    "Twitterbot",
+    "TurnitinBot",
+    "YandexAdditional",
+    "YandexAdditionalBot",
 ]
 
 
@@ -101,6 +119,21 @@ class PageSnapshot:
     h2_count: int = 0
     h3_count: int = 0
     headings: list[str] = field(default_factory=list)   # h1 + h2 text
+    schema_types: list[str] = field(default_factory=list)       # JSON-LD @type values
+    canonical_url: str = ""
+    broken_links_on_page: int = 0
+    size_kb: float = 0.0
+    response_ms: int = 0
+    redirect_hops: int = 0
+    # Accessibility / agent readability (HTML-level)
+    semantic_landmarks: int = 0
+    aria_labeled_elements: int = 0
+    images_with_alt: int = 0
+    images_total: int = 0
+    form_inputs_labeled: int = 0
+    form_inputs_total: int = 0
+    heading_skip_levels: int = 0
+    agent_readability_score: int = 0
 
 
 @dataclass
@@ -127,14 +160,27 @@ class CrawlResult:
     thin_pages: list[str] = field(default_factory=list)
     missing_anchor_text: list[str] = field(default_factory=list)
     question_headings: list[str] = field(default_factory=list)
-    has_ai_txt: bool = False
     has_llms_txt: bool = False
     robots_blocks_ai: bool = False
+    ai_bots_allowed: int = 0
+    ai_bots_blocked: int = 0
     robots_text: str = ""
     issues: list[CrawlIssue] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     title: str = ""
     meta_description: str = ""
+    # v1.1 signals
+    schema_types_found: list[str] = field(default_factory=list)
+    broken_links: list[str] = field(default_factory=list)
+    total_size_kb: float = 0.0
+    avg_response_ms: int = 0
+    max_redirect_hops: int = 0
+    has_about_page: bool = False
+    has_contact_page: bool = False
+    # Agent readability aggregates
+    avg_agent_readability: int = 0
+    pages_with_landmarks: int = 0
+    total_images_missing_alt: int = 0
 
     @property
     def total_pages(self) -> int:
@@ -169,11 +215,12 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15) -> CrawlRe
     domain = _normalize_domain(domain)
     result = CrawlResult(domain=domain)
 
-    # 1. Check robots.txt + ai.txt + llms.txt first
+    # 1. Check robots.txt + llms.txt first
     robots_info = _check_robots_txt(domain, timeout=timeout)
     result.robots_text = robots_info["text"]
     result.robots_blocks_ai = robots_info["blocks_ai"]
-    result.has_ai_txt = _check_special_file(domain, "/ai.txt", timeout=timeout)
+    result.ai_bots_allowed = robots_info["ai_bots_allowed"]
+    result.ai_bots_blocked = robots_info["ai_bots_blocked"]
     result.has_llms_txt = _check_special_file(domain, "/llms.txt", timeout=timeout)
 
     if robots_info["blocks_self"]:
@@ -238,7 +285,9 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15) -> CrawlRe
                 continue
 
             consecutive_errors = 0
-            snap = _extract_page_signals(r.text, r.url)
+            redirect_hops = len(r.history)
+            resp_ms = int(r.elapsed.total_seconds() * 1000)
+            snap = _extract_page_signals(r.text, r.url, size_bytes=len(r.content), response_ms=resp_ms, redirect_hops=redirect_hops)
             result.pages_analyzed.append(snap)
             result.pages_crawled += 1
 
@@ -397,7 +446,7 @@ def generate_buyer_topics(
 # ---------------------------------------------------------------------------
 
 
-def _extract_page_signals(html: str, url: str) -> PageSnapshot:
+def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms: int = 0, redirect_hops: int = 0) -> PageSnapshot:
     """Extract AI-readiness signals from one page's HTML."""
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text(" ", strip=True)
@@ -409,12 +458,22 @@ def _extract_page_signals(html: str, url: str) -> PageSnapshot:
     meta_desc_tag = soup.find("meta", attrs={"name": "description"})
     meta_description = meta_desc_tag.get("content", "").strip() if meta_desc_tag else ""
 
+    # Canonical URL
+    canonical_url = ""
+    canonical_tag = soup.find("link", rel="canonical")
+    if canonical_tag and canonical_tag.get("href"):
+        canonical_url = canonical_tag["href"].strip()
+
     snap = PageSnapshot(
         url=url,
         status_code=200,
         title=title,
         meta_description=meta_description,
         word_count=word_count,
+        canonical_url=canonical_url,
+        size_kb=round(size_bytes / 1024, 1) if size_bytes else 0.0,
+        response_ms=response_ms,
+        redirect_hops=redirect_hops,
     )
 
     # Answer capsules: H2/H3 followed by a <p> with at least 20 chars within
@@ -456,11 +515,14 @@ def _extract_page_signals(html: str, url: str) -> PageSnapshot:
     # Authorship
     snap.has_authorship = _has_authorship(soup)
 
-    # Schema
-    snap.has_schema = _has_schema(soup)
+    # Schema + schema types
+    snap.has_schema, snap.schema_types = _has_schema_with_types(soup)
 
     # Anchor text + internal links
-    snap.internal_links, snap.missing_anchor_text = _analyze_anchors(soup, url)
+    snap.internal_links, snap.missing_anchor_text, snap.broken_links_on_page = _analyze_anchors(soup, url)
+
+    # Agent readability signals
+    _extract_a11y_signals(snap, soup)
 
     return snap
 
@@ -521,21 +583,41 @@ def _jsonld_has_author(obj) -> bool:
     return False
 
 
+def _has_schema_with_types(soup: BeautifulSoup) -> tuple[bool, list[str]]:
+    """Check for JSON-LD or microdata schema. Returns (has_schema, [@type values])."""
+    types: list[str] = []
+    for script in soup.find_all("script", type="application/ld+json"):
+        if not script.string or not script.string.strip():
+            continue
+        try:
+            data = json.loads(script.string.strip())
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                if isinstance(item, dict):
+                    t = item.get("@type")
+                    if isinstance(t, str):
+                        types.append(t)
+                    elif isinstance(t, list):
+                        types.extend(t)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+    for el in soup.find_all(attrs={"itemtype": True}):
+        raw = el.get("itemtype", "")
+        t = raw.rstrip("/").split("/")[-1]
+        if t and t not in types:
+            types.append(t)
+    return len(types) > 0, types
+
+
 def _has_schema(soup: BeautifulSoup) -> bool:
-    """Check for JSON-LD or microdata schema."""
-    if soup.find("script", type="application/ld+json"):
-        return True
-    if soup.find(attrs={"itemscope": True}):
-        return True
-    if soup.find(attrs={"itemtype": True}):
-        return True
-    return False
+    """Legacy wrapper."""
+    has, _ = _has_schema_with_types(soup)
+    return has
 
 
-def _analyze_anchors(soup: BeautifulSoup, base_url: str) -> tuple[int, int]:
-    """
-    Count internal links and links with missing/empty/generic anchor text.
-    """
+def _analyze_anchors(soup: BeautifulSoup, base_url: str) -> tuple[int, int, int]:
+    """Count internal links, missing/generic anchor text, and empty/broken href links.
+    Returns (internal_links, missing_anchor, broken_href_count)."""
     GENERIC_ANCHORS = {
         "", "click here", "read more", "learn more", "here", "this",
         "link", "more", "continue", "continue reading", "view more",
@@ -543,9 +625,13 @@ def _analyze_anchors(soup: BeautifulSoup, base_url: str) -> tuple[int, int]:
     base_host = urlparse(base_url).netloc
     internal = 0
     missing = 0
+    broken = 0
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
-        if not href or href.startswith("#") or href.startswith("mailto:"):
+        if not href:
+            broken += 1
+            continue
+        if href.startswith("#") or href.startswith("mailto:"):
             continue
         absolute = urljoin(base_url, href)
         if urlparse(absolute).netloc == base_host:
@@ -553,7 +639,7 @@ def _analyze_anchors(soup: BeautifulSoup, base_url: str) -> tuple[int, int]:
             anchor_text = a.get_text(" ", strip=True).lower()
             if anchor_text in GENERIC_ANCHORS or not anchor_text:
                 missing += 1
-    return internal, missing
+    return internal, missing, broken
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +687,35 @@ def _aggregate(result: CrawlResult) -> None:
         p.url for p in pages if p.has_question_headings
     ][:5]
 
+    # v1.1 signals
+    result.total_size_kb = round(sum(p.size_kb for p in pages), 1)
+    result.avg_response_ms = int(sum(p.response_ms for p in pages) / len(pages))
+    result.max_redirect_hops = max((p.redirect_hops for p in pages), default=0)
+
+    all_types: list[str] = []
+    for p in pages:
+        for t in p.schema_types:
+            if t not in all_types:
+                all_types.append(t)
+    result.schema_types_found = all_types
+
+    result.broken_links = [p.url for p in pages if p.broken_links_on_page > 0]
+
+    about_paths = ("/about", "/about-us", "/company", "/our-story", "/team")
+    contact_paths = ("/contact", "/contact-us", "/get-in-touch", "/support", "/help")
+    for p in pages:
+        path = urlparse(p.url).path.rstrip("/").lower()
+        if any(path == ap or path.endswith(ap) for ap in about_paths):
+            result.has_about_page = True
+        if any(path == cp or path.endswith(cp) for cp in contact_paths):
+            result.has_contact_page = True
+
+    # Agent readability aggregates
+    if pages:
+        result.avg_agent_readability = int(sum(p.agent_readability_score for p in pages) / len(pages))
+        result.pages_with_landmarks = sum(1 for p in pages if p.semantic_landmarks > 0)
+        result.total_images_missing_alt = sum(p.images_total - p.images_with_alt for p in pages)
+
     # Issues
     issues: list[CrawlIssue] = []
 
@@ -609,6 +724,48 @@ def _aggregate(result: CrawlResult) -> None:
             category="answer_capsules",
             severity="high",
             detail=f"No answer-first content patterns detected across {result.total_pages} pages",
+        ))
+
+    if result.broken_links:
+        issues.append(CrawlIssue(
+            category="technical",
+            severity="medium",
+            detail=f"{len(result.broken_links)} page(s) found with empty or broken href links",
+        ))
+
+    if result.max_redirect_hops > 1:
+        issues.append(CrawlIssue(
+            category="technical",
+            severity="low",
+            detail=f"Max {result.max_redirect_hops} redirect hops detected — chains over 1 hop degrade crawl efficiency",
+        ))
+
+    if not result.has_about_page:
+        issues.append(CrawlIssue(
+            category="entity_definition",
+            severity="medium",
+            detail="No About page detected — AI engines use About pages for entity grounding and brand context",
+        ))
+
+    if not result.has_contact_page:
+        issues.append(CrawlIssue(
+            category="entity_definition",
+            severity="low",
+            detail="No Contact page detected — missing NAP (name/address/phone) harms local entity signals",
+        ))
+
+    if result.pages_with_landmarks == 0 and result.total_pages >= 3:
+        issues.append(CrawlIssue(
+            category="accessibility",
+            severity="medium",
+            detail="No semantic landmarks (nav, main, header, footer) detected — AI agents rely on landmarks for page structure",
+        ))
+
+    if result.total_images_missing_alt > 0:
+        issues.append(CrawlIssue(
+            category="accessibility",
+            severity="low",
+            detail=f"{result.total_images_missing_alt} images missing alt text — AI agents use alt text for image context",
         ))
 
     if result.thin_pages:
@@ -639,13 +796,6 @@ def _aggregate(result: CrawlResult) -> None:
             detail="No author bylines or Person schema detected on crawled pages",
         ))
 
-    if not result.has_ai_txt:
-        issues.append(CrawlIssue(
-            category="access_hygiene",
-            severity="low",
-            detail="No /ai.txt found — AI crawlers have no explicit access policy",
-        ))
-
     if not result.has_llms_txt:
         issues.append(CrawlIssue(
             category="access_hygiene",
@@ -657,7 +807,10 @@ def _aggregate(result: CrawlResult) -> None:
         issues.append(CrawlIssue(
             category="access_hygiene",
             severity="critical",
-            detail="robots.txt blocks one or more major AI crawlers (GPTBot, ClaudeBot, etc.)",
+            detail=(
+                f"robots.txt blocks {result.ai_bots_blocked} of {len(AI_BOT_USER_AGENTS)} "
+                f"tracked AI crawlers — only {result.ai_bots_allowed} explicitly allowed"
+            ),
         ))
 
     result.issues = issues
@@ -687,10 +840,27 @@ def _compute_health_score(result: CrawlResult) -> int:
         score -= 20
 
     # Bonus for having the new files
-    if result.has_ai_txt:
-        score += 2
     if result.has_llms_txt:
         score += 3
+
+    # v1.1 signals
+    if result.has_about_page:
+        score += 3
+    if result.has_contact_page:
+        score += 2
+    if result.max_redirect_hops > 1:
+        score -= 3
+    if result.broken_links:
+        score -= min(10, len(result.broken_links) * 2)
+    if result.avg_response_ms > 3000:
+        score -= 10
+    elif result.avg_response_ms > 1500:
+        score -= 5
+
+    # Agent readability
+    if result.pages_with_landmarks == 0:
+        score -= 5
+    score += min(5, result.pages_with_landmarks)
 
     return max(0, min(100, score))
 
@@ -726,12 +896,23 @@ def _check_robots_txt(domain: str, timeout: int = 10) -> dict:
     """
     Check robots.txt for AI bot directives. Returns:
     {
-        "text": str,         # raw robots.txt
-        "blocks_ai": bool,   # blocks GPTBot/ClaudeBot/PerplexityBot/etc.
-        "blocks_self": bool, # blocks our audit user-agent
+        "text": str,              # raw robots.txt
+        "blocks_ai": bool,        # True if ANY tracked AI bot is blocked
+        "blocks_self": bool,      # blocks our audit user-agent
+        "ai_bots_allowed": int,   # count of tracked AI bots explicitly allowed
+        "ai_bots_blocked": int,   # count of tracked AI bots explicitly blocked
+        "total_ai_bots_tracked": int,
     }
+    Parses both Allow and Disallow directives.
     """
-    out = {"text": "", "blocks_ai": False, "blocks_self": False}
+    out = {
+        "text": "",
+        "blocks_ai": False,
+        "blocks_self": False,
+        "ai_bots_allowed": 0,
+        "ai_bots_blocked": 0,
+        "total_ai_bots_tracked": len(AI_BOT_USER_AGENTS),
+    }
     try:
         r = requests.get(
             f"https://{domain}/robots.txt",
@@ -744,7 +925,8 @@ def _check_robots_txt(domain: str, timeout: int = 10) -> dict:
     except requests.RequestException:
         return out
 
-    # Parse: for each user-agent block, see which bots are disallowed from /
+    bot_decisions: dict[str, bool] = {}  # True=blocked, False=allowed
+
     current_agents: list[str] = []
     for raw_line in out["text"].splitlines():
         line = raw_line.split("#", 1)[0].strip()
@@ -757,18 +939,35 @@ def _check_robots_txt(domain: str, timeout: int = 10) -> dict:
             if value in ("/", ""):
                 for agent in current_agents:
                     if agent == "*":
-                        # Wildcard blocks everything including AI bots
                         out["blocks_ai"] = True
+                        for bot in AI_BOT_USER_AGENTS:
+                            if bot not in bot_decisions:
+                                bot_decisions[bot] = True
                     elif agent in AI_BOT_USER_AGENTS:
                         out["blocks_ai"] = True
+                        bot_decisions[agent] = True
                     if agent == DEFAULT_HEADERS["User-Agent"].split(" ")[0] or agent == "*":
                         out["blocks_self"] = True
+        elif line.lower().startswith("allow:"):
+            value = line.split(":", 1)[1].strip()
+            if value in ("/", ""):
+                for agent in current_agents:
+                    if agent == "*":
+                        for bot in AI_BOT_USER_AGENTS:
+                            if bot not in bot_decisions:
+                                bot_decisions[bot] = False
+                    elif agent in AI_BOT_USER_AGENTS:
+                        if agent not in bot_decisions:
+                            bot_decisions[agent] = False
+
+    out["ai_bots_blocked"] = sum(1 for v in bot_decisions.values() if v)
+    out["ai_bots_allowed"] = sum(1 for v in bot_decisions.values() if not v)
 
     return out
 
 
 def _check_special_file(domain: str, path: str, timeout: int = 10) -> bool:
-    """Check if a special file (e.g. /ai.txt, /llms.txt) exists."""
+    """Check if a special file (e.g. /llms.txt) exists."""
     try:
         r = requests.head(
             f"https://{domain}{path}",
@@ -788,3 +987,67 @@ def _check_special_file(domain: str, path: str, timeout: int = 10) -> bool:
         return r.ok
     except requests.RequestException:
         return False
+
+
+def _extract_a11y_signals(snap: PageSnapshot, soup: BeautifulSoup) -> None:
+    """Extract accessibility / agent-readability signals from HTML (no headless browser)."""
+    # Semantic landmarks
+    LANDMARKS = {"nav", "main", "header", "footer", "aside", "article", "section"}
+    snap.semantic_landmarks = sum(
+        1 for tag in LANDMARKS if soup.find(tag)
+    )
+
+    # ARIA-labeled elements
+    snap.aria_labeled_elements = len(soup.find_all(
+        attrs={"aria-label": True}
+    )) + len(soup.find_all(
+        attrs={"aria-labelledby": True}
+    ))
+
+    # Images
+    imgs = soup.find_all("img")
+    snap.images_total = len(imgs)
+    snap.images_with_alt = sum(
+        1 for img in imgs if img.get("alt") and img["alt"].strip()
+    )
+
+    # Form inputs with labels
+    inputs = soup.find_all(["input", "select", "textarea"])
+    snap.form_inputs_total = len(inputs)
+    snap.form_inputs_labeled = sum(
+        1 for inp in inputs
+        if inp.get("id") and soup.find("label", attrs={"for": inp["id"]})
+        or inp.get("aria-label")
+        or inp.get("aria-labelledby")
+        or inp.find_parent("label")
+    )
+
+    # Heading hierarchy gaps
+    heading_tags = [int(h.name[1]) for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])]
+    skip_levels = 0
+    for i in range(1, len(heading_tags)):
+        if heading_tags[i] > heading_tags[i-1] + 1:
+            skip_levels += 1
+    snap.heading_skip_levels = skip_levels
+
+    # Composite agent readability score (0-100)
+    score = 50  # baseline
+    if snap.semantic_landmarks >= 3:
+        score += 15
+    elif snap.semantic_landmarks >= 1:
+        score += 5
+    if snap.images_total > 0:
+        alt_pct = snap.images_with_alt / snap.images_total
+        score += int(alt_pct * 15)
+    if snap.form_inputs_total > 0:
+        labeled_pct = snap.form_inputs_labeled / snap.form_inputs_total
+        score += int(labeled_pct * 10)
+    else:
+        score += 10  # no forms = no penalty
+    if snap.heading_skip_levels == 0:
+        score += 10
+    elif snap.heading_skip_levels <= 2:
+        score += 5
+    score += min(5, snap.aria_labeled_elements)
+
+    snap.agent_readability_score = max(0, min(100, score))

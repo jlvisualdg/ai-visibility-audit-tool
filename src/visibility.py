@@ -90,6 +90,14 @@ class EngineResult:
     model: str = ""
     latency_ms: int = 0
     error: Optional[str] = None
+    # v1.2 — brand visibility tracking
+    brand_mentioned: bool = False
+    brand_mention_count: int = 0
+    first_mention_section: Optional[int] = None    # 1-indexed section number
+    url_citation_count: int = 0                    # how many times target URL appears
+    first_competitor: Optional[str] = None          # top brand mentioned before target
+    first_competitor_url: Optional[str] = None
+    competitors: list[dict] = field(default_factory=list)  # [{name, url}, ...]
 
 
 @dataclass
@@ -101,6 +109,11 @@ class TopicResult:
     cited_sources: list[str] = field(default_factory=list)   # deduped union
     covered: bool = False                                    # target domain present
     pass_count: int = 0
+    # v1.2 — aggregates
+    best_brand_mentions: int = 0
+    best_url_citations: int = 0
+    best_first_section: Optional[int] = None
+    top_competitor: Optional[str] = None
 
     @property
     def coverage_rate(self) -> float:
@@ -168,9 +181,11 @@ class PerplexityEngine:
     OpenRouter. This is OpenAI-style annotation format.
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None, target_domain: str = ""):
         self.api_key = (api_key or OPENROUTER_API_KEY).strip()
         self.model = (model or PERPLEXITY_MODEL).strip()
+        self.target_domain = target_domain
+        self.brand_name = target_domain.split(".")[0].replace("-", " ").title() if target_domain else ""
         if not self.api_key:
             raise ValueError(
                 "PerplexityEngine needs OPENROUTER_API_KEY. "
@@ -260,6 +275,13 @@ class PerplexityEngine:
             citations=citations,
             model=self.model,
             latency_ms=_elapsed_ms(started),
+            brand_mentioned=self.target_domain.lower() in text.lower() if self.target_domain else False,
+            brand_mention_count=text.lower().count(self.target_domain.lower()) if self.target_domain else 0,
+            url_citation_count=sum(1 for c in citations if self.target_domain in c) if self.target_domain else 0,
+            first_mention_section=_find_first_mention_section(text, self.target_domain, self.brand_name),
+            first_competitor=(_find_first_competitor(text, self.brand_name) or {}).get("name"),
+            first_competitor_url=(_find_first_competitor(text, self.brand_name) or {}).get("url"),
+            competitors=_find_all_competitors(text, self.brand_name) if self.brand_name else [],
         )
 
 
@@ -364,7 +386,7 @@ def build_engines(
     perplexity_key = (keys.get("openrouter") or OPENROUTER_API_KEY).strip()
     if perplexity_key:
         try:
-            engines.append(PerplexityEngine(api_key=perplexity_key))
+            engines.append(PerplexityEngine(api_key=perplexity_key, target_domain=target_domain))
         except ValueError:
             engines.append(MockEngine("perplexity"))
     else:
@@ -439,6 +461,26 @@ def build_citation_matrix(
                     if c not in seen:
                         seen.add(c)
                         result.cited_sources.append(c)
+
+            # v1.2 — brand visibility aggregates
+            best_mentions = 0
+            best_citations = 0
+            best_section = None
+            top_comp = None
+            for er in result.passes:
+                if er.brand_mention_count > best_mentions:
+                    best_mentions = er.brand_mention_count
+                if er.url_citation_count > best_citations:
+                    best_citations = er.url_citation_count
+                if er.first_mention_section is not None:
+                    if best_section is None or er.first_mention_section < best_section:
+                        best_section = er.first_mention_section
+                if er.first_competitor and top_comp is None:
+                    top_comp = er.first_competitor
+            result.best_brand_mentions = best_mentions
+            result.best_url_citations = best_citations
+            result.best_first_section = best_section
+            result.top_competitor = top_comp
 
             matrix.results.append(result)
 
@@ -532,3 +574,63 @@ def _target_in(citations: list[str], target: Optional[str] = None) -> bool:
             ):
                 return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# v1.2 — position tracking + competitor extraction
+# ---------------------------------------------------------------------------
+
+
+def _find_first_mention_section(text: str, domain: str, brand: str) -> Optional[int]:
+    """Find which numbered section/paragraph first mentions the brand or domain."""
+    if not domain and not brand:
+        return None
+    sections = [s.strip() for s in re.split(r'\n(?=#{1,3}\s|\d+\.\s|\*\*)|(?<=\n)\n(?=[A-Z])', text) if s.strip()]
+    targets = []
+    if brand:
+        targets.append(brand.lower())
+    if domain:
+        targets.append(domain.lower())
+    for i, section in enumerate(sections):
+        for t in targets:
+            if t in section.lower():
+                return i + 1
+    return None
+
+
+def _find_first_competitor(text: str, brand: str) -> Optional[dict]:
+    """Find the first competitor brand mentioned (capitalized multi-word phrase with URL)."""
+    if not brand:
+        return None
+    brand_lower = brand.lower()
+    sections = [s.strip() for s in re.split(r'\n(?=#{1,3}\s|\d+\.\s|\*\*)|(?<=\n)\n(?=[A-Z])', text) if s.strip()]
+    for section in sections:
+        if brand_lower in section.lower():
+            break  # brand itself — skip to next section
+        urls = re.findall(r'https?://[^\s<>"\')\\]]+', section)
+        caps = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b', section)
+        for cap in caps:
+            if cap.lower() != brand_lower and len(cap) > 5:
+                return {"name": cap, "url": urls[0] if urls else None}
+    return None
+
+
+def _find_all_competitors(text: str, brand: str) -> list[dict]:
+    """Extract all competitor brands mentioned with their URLs."""
+    if not brand:
+        return []
+    brand_lower = brand.lower()
+    competitors: list[dict] = []
+    seen: set[str] = set()
+    sections = [s.strip() for s in re.split(r'\n(?=#{1,3}\s|\d+\.\s|\*\*)|(?<=\n)\n(?=[A-Z])', text) if s.strip()]
+    noise = {"linkedin", "facebook", "youtube", "google", "apple", "microsoft", "amazon",
+             "twitter", "x", "reddit", "wikipedia", "github", "instagram", "tiktok"}
+    for section in sections:
+        urls = re.findall(r'https?://[^\s<>"\')\\]]+', section)
+        caps = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b', section)
+        for cap in caps:
+            cap_lower = cap.lower()
+            if cap_lower != brand_lower and cap_lower not in noise and len(cap) > 5 and cap_lower not in seen:
+                seen.add(cap_lower)
+                competitors.append({"name": cap, "url": urls[0] if urls else None})
+    return competitors[:5]

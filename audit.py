@@ -90,9 +90,13 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
             for err in crawl.errors[:3]:
                 console.print(f"  [yellow]⚠[/] {err}")
 
-        # 2. Topics
-        progress.update(task, description="[cyan]Generating buyer topics...")
-        topics = generate_buyer_topics(crawl)
+        # 2. Topics — try LLM first, fall back to heuristic
+        progress.update(task, description="[cyan]Generating buyer topics (LLM)...")
+        try:
+            from src.topicgen import generate_botf_topics
+            topics = generate_botf_topics(domain)
+        except Exception:
+            topics = generate_buyer_topics(crawl)
         progress.update(task, advance=1)
         console.print(f"  [dim]Topics: {', '.join(topics)}[/]")
 
