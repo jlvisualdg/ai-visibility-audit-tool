@@ -14,3 +14,4 @@ output/*.html
 .vscode/
 .idea/
 .DS_Store
+.hermes/
