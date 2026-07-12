@@ -43,6 +43,10 @@ def generate_botf_topics(
 
     If homepage_html is provided, uses that directly. Otherwise scrapes the homepage.
     Falls back to heuristic generation if the LLM call fails.
+
+    Post-processes the result to replace 2 of the 5 queries at positions [0] and [3]
+    with keyword-variation queries based on the business's primary service keyword,
+    detected via an additional LLM extraction pass.
     """
     key = (api_key or OPENROUTER_API_KEY).strip()
     if not key:
@@ -75,7 +79,7 @@ def generate_botf_topics(
     if meta_tag:
         meta_desc = meta_tag.get("content", "")
 
-    # 3. LLM prompt
+    # 3. LLM prompt for initial 5 queries
     prompt = f"""You are analyzing a business website to generate high-intent, bottom-of-funnel search queries that a ready-to-buy customer would type into ChatGPT or Perplexity.
 
 BUSINESS:
@@ -98,7 +102,7 @@ GOOD examples: "best executive assistant matching service for founders", "top vi
 
 Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
 
-    # 4. Call LLM
+    # 4. Call LLM for initial topics
     try:
         r = requests.post(
             TOPICGEN_URL,
@@ -122,11 +126,112 @@ Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
         if match:
             topics = json.loads(match.group())
             if isinstance(topics, list) and len(topics) >= 1:
-                return topics[:n]
+                topics = topics[:n]
+            else:
+                return _fallback_topics(domain, n)
+        else:
+            return _fallback_topics(domain, n)
     except (requests.RequestException, json.JSONDecodeError, KeyError):
-        pass
+        return _fallback_topics(domain, n)
 
-    return _fallback_topics(domain, n)
+    # 5. Post-process: replace positions [0] and [3] with keyword-variation queries
+    if len(topics) >= 5:
+        _inject_keyword_variations(topics, body, key, timeout)
+
+    return topics[:n]
+
+
+def _inject_keyword_variations(
+    topics: list[str],
+    body_text: str,
+    api_key: str,
+    timeout: int,
+) -> None:
+    """
+    Post-process topics list in-place: extract the business's primary service
+    keyword from the homepage text, generate 2 variation queries, and slot them
+    into positions [0] and [3] of the topics list.
+
+    Silently returns without modification if any step fails (LLM unavailable,
+    malformed response, etc.).
+    """
+    # Step A: Extract the primary service keyword
+    kw_prompt = (
+        "Extract the single primary service keyword from this business homepage text.\n"
+        "This should be the main 2-6 word phrase describing what service/product the business sells.\n"
+        'Example: for "virtual executive assistant matching for founders" → "executive assistant matching"\n'
+        'Example: for "AI-powered chatbot platform for ecommerce" → "AI chatbot platform"\n'
+        "Return ONLY the keyword phrase, nothing else — no quotes, no explanation.\n\n"
+        f"Homepage excerpt:\n{body_text[:1500]}"
+    )
+
+    try:
+        kw_r = requests.post(
+            TOPICGEN_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": TOPICGEN_MODEL,
+                "messages": [{"role": "user", "content": kw_prompt}],
+                "temperature": 0.0,
+                "max_tokens": 50,
+            },
+            timeout=timeout,
+        )
+        if not kw_r.ok:
+            return
+        main_kw = (
+            kw_r.json()["choices"][0]["message"]["content"]
+            .strip()
+            .strip('"')
+            .strip("'")
+        )
+        if not main_kw:
+            return
+    except (requests.RequestException, json.JSONDecodeError, KeyError):
+        return
+
+    # Step B: Generate 2 variation queries from the main keyword
+    var_prompt = (
+        f'Generate exactly 2 different bottom-of-funnel search queries built around the keyword "{main_kw}".\n'
+        "Must be 6-15 words each, unbranded, natural commercial/buyer language.\n"
+        'Use BOTF phrasing: "best X for Y", "hire a X service", "top X agencies 2026", "X service pricing", '
+        '"cost of X for business", "find a X provider".\n'
+        "The two queries should use DIFFERENT phrasings and angles — do not just swap one word.\n"
+        "Do NOT include the brand name or any specific company name.\n"
+        'Return ONLY a JSON array of 2 strings. Example: ["query one here", "query two here"]'
+    )
+
+    try:
+        var_r = requests.post(
+            TOPICGEN_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": TOPICGEN_MODEL,
+                "messages": [{"role": "user", "content": var_prompt}],
+                "temperature": 0.5,
+                "max_tokens": 150,
+            },
+            timeout=timeout,
+        )
+        if not var_r.ok:
+            return
+
+        var_raw = var_r.json()["choices"][0]["message"]["content"].strip()
+        var_match = re.search(r"\[.*?\]", var_raw, re.DOTALL)
+        if var_match:
+            variations = json.loads(var_match.group())
+            if isinstance(variations, list) and len(variations) >= 2:
+                # Slot into positions [0] and [3]
+                topics[0] = variations[0]
+                topics[3] = variations[1]
+    except (requests.RequestException, json.JSONDecodeError, KeyError):
+        return
 
 
 def _fallback_topics(domain: str, n: int) -> list[str]:

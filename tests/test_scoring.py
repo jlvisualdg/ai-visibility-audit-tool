@@ -23,6 +23,9 @@ from src.scoring import (
     _extract_target_tokens,
     _normalize_brand_for_match,
     _normalize_domain,
+    aggregate_results,
+    _is_target_brand,
+    _domain_contains_citation,
 )
 
 
@@ -459,6 +462,188 @@ def test_no_false_positive_on_single_cap_word():
     # "January Corp" — two capitalized words, valid
     assert brands == ["January Corp"], f"Got: {brands}"
     assert "Monday" not in brands
+
+
+# ============================================================================
+# Test 11: aggregate_results — end-to-end summary
+# ============================================================================
+
+
+def _make_agg_result(topic, engine, brand_mentions=None, positions=None,
+                     citations=None, error=None):
+    """Helper: build a result dict matching the collector shape."""
+    return {
+        "topic": topic,
+        "engine": engine,
+        "text": f"Mock text from {engine} for {topic}",
+        "citations": citations or [],
+        "latency_ms": 100,
+        "error": error,
+        "brand_mentions": brand_mentions or [],
+        "positions": positions or [],
+        "target_mention_count": len(positions or []),
+    }
+
+
+def test_aggregate_returns_five_keys():
+    """aggregate_results returns a dict with exactly 5 keys."""
+    results = [
+        _make_agg_result("t1", "Perplexity",
+                         brand_mentions=["Acme Corp", "Pareto Talent"],
+                         positions=[2]),
+    ]
+    agg = aggregate_results(results, "paretotalent.com")
+    assert set(agg.keys()) == {
+        "ai_presence_pct", "best_brand", "best_model",
+        "citation_count", "best_topic",
+    }
+    assert len(agg) == 5
+
+
+def test_aggregate_two_topics_two_engines():
+    """Mock 2 engines × 2 topics = 4 results with specific brand mentions."""
+    results = [
+        # Perplexity / topic A: target at position 2
+        _make_agg_result("topic A", "Perplexity",
+                         brand_mentions=["Acme Corp", "Pareto Talent", "Beta Inc"],
+                         positions=[2],
+                         citations=["paretotalent.com", "acme.com"]),
+        # Perplexity / topic B: target at position 1
+        _make_agg_result("topic B", "Perplexity",
+                         brand_mentions=["Pareto Talent", "Global Tech"],
+                         positions=[1],
+                         citations=["competitor.com"]),
+        # ChatGPT / topic A: no target
+        _make_agg_result("topic A", "ChatGPT",
+                         brand_mentions=["Acme Corp", "Global Tech"],
+                         positions=[],
+                         citations=[]),
+        # ChatGPT / topic B: target at position 3
+        _make_agg_result("topic B", "ChatGPT",
+                         brand_mentions=["Global Tech", "Acme Corp", "Pareto Talent"],
+                         positions=[3],
+                         citations=["blog.paretotalent.com"]),
+    ]
+
+    agg = aggregate_results(results, "paretotalent.com")
+
+    # ai_presence_pct: mean of 4 per-query scores
+    # Score 1 (Perplexity/topic A): (3-2+1)/3*100=66.67 * min(1,3)/3 = 22.22
+    # Score 2 (Perplexity/topic B): (2-1+1)/2*100=100 * 1/3 = 33.33
+    # Score 3 (ChatGPT/topic A): 0
+    # Score 4 (ChatGPT/topic B): (3-3+1)/3*100=33.33 * 1/3 = 11.11
+    # Mean: 16.67
+    assert 16.0 < agg["ai_presence_pct"] < 18.0, (
+        f"Expected ~16.67, got {agg['ai_presence_pct']}"
+    )
+
+    # best_model: Perplexity mean (22.22+33.33)/2=27.78 > ChatGPT mean (0+11.11)/2=5.56
+    assert agg["best_model"] == "Perplexity", (
+        f"Expected 'Perplexity', got '{agg['best_model']}'"
+    )
+
+    # best_brand: Acme Corp appears first in 3 results → highest cumulative
+    assert agg["best_brand"] == "Acme Corp", (
+        f"Expected 'Acme Corp', got '{agg['best_brand']}'"
+    )
+
+    # citation_count: paretotalent.com in result 1, blog.paretotalent.com in result 4
+    assert agg["citation_count"] == 2, (
+        f"Expected 2, got {agg['citation_count']}"
+    )
+
+    # best_topic: topic B has higher mean
+    assert agg["best_topic"] == "topic B", (
+        f"Expected 'topic B', got '{agg['best_topic']}'"
+    )
+
+
+def test_aggregate_all_misses():
+    """Edge case: target never appears → ai_presence_pct=0, best_brand='None'."""
+    results = [
+        _make_agg_result("t1", "A", brand_mentions=[], positions=[]),
+        _make_agg_result("t2", "B", brand_mentions=[], positions=[]),
+    ]
+    agg = aggregate_results(results, "paretotalent.com")
+    assert agg["ai_presence_pct"] == 0.0
+    assert agg["best_brand"] == "None"
+    assert agg["citation_count"] == 0
+
+
+def test_aggregate_all_hits_on_one_brand():
+    """Edge case: all hits on one brand → best_brand is that brand."""
+    results = [
+        _make_agg_result("t1", "Perplexity",
+                         brand_mentions=["Acme Corp"],
+                         positions=[]),
+        _make_agg_result("t2", "ChatGPT",
+                         brand_mentions=["Acme Corp"],
+                         positions=[]),
+    ]
+    agg = aggregate_results(results, "paretotalent.com")
+    assert agg["best_brand"] == "Acme Corp"
+
+
+def test_aggregate_empty_results():
+    """Empty results → sensible defaults."""
+    agg = aggregate_results([], "example.com")
+    assert agg == {
+        "ai_presence_pct": 0.0,
+        "best_brand": "None",
+        "best_model": "",
+        "citation_count": 0,
+        "best_topic": "",
+    }
+
+
+# ============================================================================
+# Test 12: _is_target_brand helper
+# ============================================================================
+
+
+def test_is_target_brand_matches():
+    """_is_target_brand identifies brands matching the target domain."""
+    from src.scoring import _extract_target_tokens
+
+    tokens = _extract_target_tokens("paretotalent.com")
+    assert _is_target_brand("Pareto Talent", tokens) is True
+    assert _is_target_brand("Acme Corp", tokens) is False
+    assert _is_target_brand("", tokens) is False
+
+    empty_tokens = []
+    assert _is_target_brand("Pareto Talent", empty_tokens) is False
+
+
+def test_is_target_brand_connectors():
+    """Connector brands (& / and) match hyphenated domains."""
+    from src.scoring import _extract_target_tokens
+
+    tokens = _extract_target_tokens("procter-gamble.com")
+    assert _is_target_brand("Procter & Gamble", tokens) is True
+    assert _is_target_brand("Procter and Gamble", tokens) is True
+
+
+# ============================================================================
+# Test 13: _domain_contains_citation helper
+# ============================================================================
+
+
+def test_domain_contains_citation_exact():
+    """Exact domain match is found."""
+    assert _domain_contains_citation("paretotalent.com", "paretotalent.com") is True
+    assert _domain_contains_citation("acme.com", "paretotalent.com") is False
+
+
+def test_domain_contains_citation_subdomain():
+    """Subdomain of target still matches."""
+    assert _domain_contains_citation("blog.paretotalent.com", "paretotalent.com") is True
+    assert _domain_contains_citation("www.paretotalent.com", "paretotalent.com") is True
+
+
+def test_domain_contains_citation_normalized():
+    """Scheme and www are stripped before comparison."""
+    assert _domain_contains_citation("https://www.paretotalent.com/page", "paretotalent.com") is True
+    assert _domain_contains_citation("paretotalent.com/page", "https://paretotalent.com") is True
 
 
 # ============================================================================

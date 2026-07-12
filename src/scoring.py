@@ -357,3 +357,154 @@ def calculate_overall_ai_presence(query_scores: list[float]) -> float:
     if not query_scores:
         return 0.0
     return statistics.mean(query_scores)
+
+
+# ---------------------------------------------------------------------------
+# Aggregate results — end-to-end audit summary
+# ---------------------------------------------------------------------------
+
+
+def _is_target_brand(brand: str, target_tokens: list[str]) -> bool:
+    """Return True if *brand* matches the target domain tokens."""
+    if not target_tokens:
+        return False
+    brand_norm = _normalize_brand_for_match(brand)
+    if not brand_norm:
+        return False
+    for token in target_tokens:
+        token_norm = _normalize_brand_for_match(token)
+        if not token_norm:
+            continue
+        if token_norm in brand_norm or brand_norm in token_norm:
+            return True
+    return False
+
+
+def _domain_contains_citation(citation: str, target_domain: str) -> bool:
+    """Return True if *citation* contains the normalized target domain."""
+    norm_domain = _normalize_domain(target_domain)
+    norm_cite = citation.lower().strip()
+    bare = norm_domain.split(".")[0]
+    return bare in norm_cite or norm_domain in norm_cite
+
+
+def aggregate_results(results: list[dict], target_domain: str) -> dict:
+    """Compute the end-to-end audit summary from a flat list of query results.
+
+    Each result dict must have the shape produced by ``execute_all()``:
+        {topic, engine, text, citations, latency_ms, error,
+         brand_mentions, positions, target_mention_count}
+
+    Returns a dict with exactly five keys:
+        ai_presence_pct : float 0–100
+            Mean of per-query ``calculate_ai_presence_score`` values.
+        best_brand : str
+            Brand (excluding the target brand) with the highest cumulative
+            AI presence score across all queries.  Returns ``'None'`` when
+            no non-target brands are found.
+        best_model : str
+            Engine name ('Perplexity', 'ChatGPT', 'Claude', or 'Gemini')
+            with the highest mean AI presence score.
+        citation_count : int
+            Total count of citations that contain the target domain.
+        best_topic : str
+            Topic with the highest mean AI presence score across its
+            4-engine pass.  Returns ``''`` when *results* is empty.
+    """
+    if not results:
+        return {
+            "ai_presence_pct": 0.0,
+            "best_brand": "None",
+            "best_model": "",
+            "citation_count": 0,
+            "best_topic": "",
+        }
+
+    target_tokens = _extract_target_tokens(target_domain)
+
+    # ---- Per-query AI presence scores ----
+    query_scores: list[float] = []
+    for r in results:
+        mention_count = r.get("target_mention_count", 0)
+        positions = r.get("positions", []) or []
+        first_position = positions[0] if positions else None
+        brand_mentions = r.get("brand_mentions", []) or []
+        total_brands = len(brand_mentions)
+
+        score = calculate_ai_presence_score(
+            mention_count=mention_count,
+            first_position=first_position,
+            total_brands=total_brands,
+        )
+        query_scores.append(score)
+
+    # ---- AI presence pct ----
+    ai_presence_pct = statistics.mean(query_scores) if query_scores else 0.0
+
+    # ---- Per-query scores keyed by engine and topic ----
+    engine_scores: dict[str, list[float]] = {}
+    topic_scores: dict[str, list[float]] = {}
+    for r, score in zip(results, query_scores):
+        eng = r.get("engine", "")
+        topic = r.get("topic", "")
+        engine_scores.setdefault(eng, []).append(score)
+        topic_scores.setdefault(topic, []).append(score)
+
+    # ---- Best model ----
+    best_model = ""
+    best_model_mean = -1.0
+    for eng, scores in engine_scores.items():
+        m = statistics.mean(scores)
+        if m > best_model_mean:
+            best_model_mean = m
+            best_model = eng
+
+    # ---- Best topic ----
+    best_topic = ""
+    best_topic_mean = -1.0
+    for topic, scores in topic_scores.items():
+        m = statistics.mean(scores)
+        if m > best_topic_mean:
+            best_topic_mean = m
+            best_topic = topic
+
+    # ---- Best brand (excluding target) ----
+    # For each non-target brand, accumulate a presence-style score across all
+    # queries.  We treat each appearance of the brand in a result's
+    # brand_mentions list as a mention (mention_count=1) and use its 1-indexed
+    # position.  The score per appearance is:
+    #     (total_brands - position + 1) / total_brands * 100
+    # which is position_score without the mention multiplier.
+    brand_cumulative: dict[str, float] = {}
+    for r in results:
+        brand_mentions = r.get("brand_mentions", []) or []
+        total_brands = len(brand_mentions)
+        if total_brands <= 0:
+            continue
+        for pos, brand in enumerate(brand_mentions, start=1):
+            if _is_target_brand(brand, target_tokens):
+                continue
+            # position_score for a single mention
+            ps = (total_brands - pos + 1) / total_brands * 100.0
+            brand_cumulative[brand] = brand_cumulative.get(brand, 0.0) + ps
+
+    if brand_cumulative:
+        best_brand = max(brand_cumulative, key=brand_cumulative.__getitem__)
+    else:
+        best_brand = "None"
+
+    # ---- Citation count ----
+    citation_count = 0
+    for r in results:
+        citations = r.get("citations", []) or []
+        for cite in citations:
+            if _domain_contains_citation(cite, target_domain):
+                citation_count += 1
+
+    return {
+        "ai_presence_pct": round(ai_presence_pct, 2),
+        "best_brand": best_brand,
+        "best_model": best_model,
+        "citation_count": citation_count,
+        "best_topic": best_topic,
+    }
