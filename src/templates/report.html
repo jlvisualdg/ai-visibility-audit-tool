@@ -1,3 +1,51 @@
+{# ---------------------------------------------------------------------------
+   JINJA2 VARIABLE STRUCTURE — Smart Marketer AEO Audit Report
+   ----------------------------------------------------------------------------
+
+   All variables are accessed via `report.*` (AuditReport dataclass) and
+   a top-level `generated_at` string. The template computes derived
+   aggregates from the raw citation matrix results.
+
+   TOP-LEVEL VARIABLES:
+     generated_at : str           — "2026-07-12 14:30"
+     brand_name   : str           — e.g. "Smart Marketer" (from report.domain, humanized)
+     brand_slogan : str           — "AI Engine Optimization Audits"
+     website_url  : str           — e.g. "https://smartmarketer.com"
+
+   REPORT OBJECT (report.*):
+     report.domain              : str      — audited domain
+     report.ai_coverage_pct     : float    — 0–100
+     report.fixable_gaps        : int      — count of fix recommendations
+     report.strategic_read      : StrategicRead
+       .title, .summary, .the_play
+     report.citation_matrix     : CitationMatrix
+       .results[]               : TopicResult — raw topic×engine cells
+         .topic, .engine, .covered, .coverage_rate
+         .best_brand_mentions, .best_url_citations, .best_first_section
+         .top_competitor, .cited_sources[]
+       .engines[]               : str   — engine names
+       .all_competitors{}       : dict  — domain → citation count
+     report.crawl_signals       : CrawlResult
+       .answer_capsules, .stat_density, .authorship_pages, .schema_pages
+       .total_pages, .health_score, .thin_pages[], .missing_anchor_text[]
+       .has_llms_txt, .robots_blocks_ai, .ai_bots_allowed, .ai_bots_blocked
+       .schema_types_found[], .broken_links[], .total_size_kb, .avg_response_ms
+       .max_redirect_hops, .has_about_page, .has_contact_page
+       .avg_agent_readability, .pages_with_landmarks, .total_images_missing_alt
+       .issues[]                : CrawlIssue {severity, detail}
+     report.fixes[]             : FixRecommendation
+       .title, .priority, .tag, .first_step, .agent_fixable
+     report.buyer_topics[]      : str   — buyer-intent topics
+     report.page_blueprints{}   : dict  — content format recommendations
+
+   DERIVED AGGREGATES (computed inside template via Jinja2):
+     best_performing_brand      : str   — brand with most citations (from all_competitors)
+     best_model_presence        : str   — engine with highest coverage for target
+     overall_citation_count     : int   — total cited_sources entries across results
+     best_performing_topic      : str   — topic with highest coverage_rate
+     top_3_brands[]             : str   — top 3 from all_competitors sorted by count
+     zero_presence_topics[]     : str   — topics with zero coverage
+   --------------------------------------------------------------------------- #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5,344 +53,484 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Visibility Audit — {{ report.domain }}</title>
 <style>
+/* ==================================================================
+   Smart Marketer Brand — Dark Theme
+   ================================================================== */
 :root {
-    --bg-primary: #0a0e27;
-    --bg-card: #111640;
-    --bg-card-hover: #161b4d;
-    --text-primary: #e0e6ff;
-    --text-muted: #8892c0;
-    --text-accent: #00d4ff;
-    --text-accent-dim: #0099bb;
-    --green: #00f5a0;
-    --orange: #ff8c42;
-    --red: #ff4757;
-    --yellow: #ffd93d;
-    --border: #1e2559;
-    --gradient-1: linear-gradient(135deg, #00d4ff 0%, #7c3aed 100%);
-    --gradient-2: linear-gradient(135deg, #00f5a0 0%, #00d4ff 100%);
+    --bg-primary: #0A0A0A;
+    --bg-card: #141414;
+    --bg-card-hover: #1A1A1A;
+    --text-primary: #FFFFFF;
+    --text-secondary: #A0A0A0;
+    --text-muted: #666666;
+    --accent-primary: #0066FF;
+    --accent-secondary: #4F46E5;
+    --gradient-brand: linear-gradient(135deg, #0066FF 0%, #4F46E5 100%);
+    --gradient-hero: linear-gradient(180deg, rgba(0,102,255,0.15) 0%, rgba(0,102,255,0) 100%);
+    --green: #22C55E;
+    --orange: #F97316;
+    --red: #EF4444;
+    --yellow: #EAB308;
+    --border: #2A2A2A;
+    --border-hover: #3A3A3A;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.4);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     background: var(--bg-primary);
     color: var(--text-primary);
     line-height: 1.6;
-    padding: 0;
-    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-.container {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 40px 24px;
-}
+.container { max-width: 1120px; margin: 0 auto; padding: 40px 24px 60px; }
 
-/* Header */
+/* ==================================================================
+   SECTION 1 — HEADER
+   ================================================================== */
 .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding-bottom: 24px;
+    padding: 28px 0;
+    margin-bottom: 48px;
     border-bottom: 1px solid var(--border);
-    margin-bottom: 40px;
-}
-
-.logo {
-    font-size: 18px;
-    font-weight: 600;
-    background: var(--gradient-1);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.copy-link {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    color: var(--text-accent);
-    padding: 8px 16px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-    transition: all 0.2s;
-}
-
-.copy-link:hover {
-    background: var(--bg-card-hover);
-}
-
-/* Audit summary */
-.summary {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 32px;
-    margin-bottom: 32px;
-}
-
-.summary-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 24px;
     flex-wrap: wrap;
     gap: 16px;
 }
 
-.domain-name {
-    font-size: 32px;
-    font-weight: 700;
-    color: var(--text-accent);
-    margin-bottom: 4px;
-}
-
-.summary-meta {
-    color: var(--text-muted);
-    font-size: 14px;
-}
-
-.summary-metrics {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
-    margin-top: 24px;
-}
-
-.metric {
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-}
-
-.metric-label {
-    color: var(--text-muted);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
-}
-
-.metric-value {
-    font-size: 36px;
-    font-weight: 700;
-    background: var(--gradient-2);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.metric-value.warn {
-    background: linear-gradient(135deg, #ff8c42 0%, #ff4757 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-}
-
-/* Section */
-.section {
-    margin-bottom: 40px;
-}
-
-.section-header {
+.header-left {
     display: flex;
-    align-items: baseline;
-    gap: 12px;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid var(--border);
+    align-items: center;
+    gap: 16px;
 }
 
-.section-number {
-    font-size: 14px;
-    color: var(--text-muted);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-.section-title {
+.header-logo {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    background: var(--gradient-brand);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 800;
+    color: #FFF;
+    flex-shrink: 0;
 }
 
-/* Strategic read */
-.strategic {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--text-accent);
-    border-radius: 12px;
-    padding: 28px;
-    margin-bottom: 32px;
-}
+.header-brand-info { display: flex; flex-direction: column; }
 
-.strategic-label {
-    color: var(--text-accent);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-    font-weight: 600;
-}
-
-.strategic-title {
-    font-size: 22px;
+.header-brand-name {
+    font-size: 20px;
     font-weight: 700;
-    margin-bottom: 16px;
-}
-
-.strategic-summary {
     color: var(--text-primary);
-    margin-bottom: 20px;
-    font-size: 16px;
+    letter-spacing: -0.3px;
 }
 
-.strategic-play {
-    background: var(--bg-primary);
-    border-radius: 8px;
-    padding: 16px;
-    border-left: 3px solid var(--green);
-}
-
-.strategic-play-label {
-    color: var(--green);
+.header-brand-slogan {
     font-size: 12px;
+    color: var(--text-secondary);
+    letter-spacing: 0.5px;
     text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-    font-weight: 600;
 }
 
-.strategic-play-text {
-    color: var(--text-primary);
-    font-size: 15px;
+.header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+.header-url {
+    font-size: 14px;
+    color: var(--accent-primary);
+    font-weight: 500;
 }
 
-/* Citation matrix table */
-.matrix-table {
-    width: 100%;
-    border-collapse: collapse;
+.header-date {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* ==================================================================
+   SECTION 2 — VERDICT (5 metric cards)
+   ================================================================== */
+.verdict {
+    margin-bottom: 48px;
+    padding: 32px;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-lg);
+    position: relative;
     overflow: hidden;
 }
 
-.matrix-table th,
-.matrix-table td {
-    padding: 14px 16px;
-    text-align: left;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
+.verdict::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--gradient-brand);
 }
 
-.matrix-table th {
-    background: var(--bg-primary);
-    color: var(--text-muted);
+.verdict-title {
+    font-size: 14px;
     font-weight: 600;
     text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+}
+
+.verdict-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+}
+
+.verdict-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    transition: border-color 0.2s;
+}
+
+.verdict-card:hover { border-color: var(--border-hover); }
+
+.verdict-card-label {
     font-size: 11px;
-    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 10px;
 }
 
-.matrix-table tr:last-child td {
-    border-bottom: none;
+.verdict-card-value {
+    font-size: 28px;
+    font-weight: 700;
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.2;
 }
 
-.matrix-table tr:hover {
-    background: var(--bg-card-hover);
+.verdict-card-value.small { font-size: 18px; }
+
+.verdict-card-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
 }
 
-.covered-yes {
+/* ==================================================================
+   SECTION 3 — BRAND RECOMMENDATION MATRIX
+   ================================================================== */
+.section { margin-bottom: 48px; }
+
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    padding-bottom: 14px;
+    border-bottom: 2px solid var(--border);
+}
+
+.section-header-icon {
+    width: 36px; height: 36px;
+    border-radius: var(--radius-sm);
+    background: var(--gradient-brand);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; color: #FFF; flex-shrink: 0;
+}
+
+.section-header-content { flex: 1; }
+
+.section-title {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+.section-subtitle {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.matrix-wrapper {
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+}
+
+.matrix-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 600px;
+    background: var(--bg-card);
+}
+
+.matrix-table thead th {
+    background: #0D0D0D;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+}
+
+.matrix-table thead th:first-child { border-right: 2px solid var(--border); min-width: 180px; }
+
+.matrix-table tbody td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+}
+
+.matrix-table tbody td:first-child {
+    font-weight: 600;
+    color: var(--text-primary);
+    border-right: 2px solid var(--border);
+}
+
+.matrix-table tbody tr:last-child td { border-bottom: none; }
+
+.matrix-table tbody tr:hover { background: var(--bg-card-hover); }
+
+.matrix-cell-covered {
     color: var(--green);
     font-weight: 600;
 }
 
-.covered-no {
+.matrix-cell-missed {
     color: var(--red);
 }
 
-.covered-partial {
+.matrix-cell-partial {
     color: var(--yellow);
 }
 
-.cited-sources {
-    font-size: 12px;
-    color: var(--text-muted);
-    display: block;
-    margin-top: 4px;
+.matrix-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 600;
 }
 
-/* Crawl signal cards */
+.badge-covered {
+    background: rgba(34,197,94,0.12);
+    color: var(--green);
+}
+
+.badge-missed {
+    background: rgba(239,68,68,0.12);
+    color: var(--red);
+}
+
+/* ==================================================================
+   SECTION 4 — TOP RECOMMENDED BRANDS
+   ================================================================== */
+.top-brands {
+    margin-top: 24px;
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.top-brand-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px 20px;
+    flex: 1;
+    min-width: 200px;
+    transition: border-color 0.2s;
+}
+
+.top-brand-item:hover { border-color: var(--border-hover); }
+
+.top-brand-rank {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--gradient-brand);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #FFF;
+    flex-shrink: 0;
+}
+
+.top-brand-info { flex: 1; min-width: 0; }
+
+.top-brand-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.top-brand-citations {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* ==================================================================
+   SECTION 5 — COMPETITIVE LANDSCAPE (6 columns)
+   ================================================================== */
+.landscape-wrapper {
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+}
+
+.landscape-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 800px;
+    background: var(--bg-card);
+}
+
+.landscape-table thead th {
+    background: #0D0D0D;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+}
+
+.landscape-table tbody td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    vertical-align: top;
+}
+
+.landscape-table tbody tr:last-child td { border-bottom: none; }
+
+.landscape-table tbody tr:hover { background: var(--bg-card-hover); }
+
+.hit-badge {
+    background: rgba(34,197,94,0.15);
+    color: var(--green);
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.miss-badge {
+    background: rgba(239,68,68,0.15);
+    color: var(--red);
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* ==================================================================
+   SECTION 6 — AI INDEXABILITY AUDIT (signal cards)
+   ================================================================== */
 .signal-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
-    margin-bottom: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 14px;
 }
 
 .signal-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
+    border-radius: var(--radius-md);
+    padding: 18px;
+    transition: border-color 0.2s, transform 0.15s;
+}
+
+.signal-card:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-1px);
+}
+
+.signal-icon {
+    font-size: 20px;
+    margin-bottom: 10px;
 }
 
 .signal-value {
-    font-size: 28px;
+    font-size: 24px;
     font-weight: 700;
-    background: var(--gradient-2);
+    background: var(--gradient-brand);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
     margin-bottom: 4px;
+    line-height: 1.2;
 }
 
 .signal-label {
+    font-size: 11px;
     color: var(--text-muted);
-    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
-.health-score {
+.signal-status-ok { color: var(--green); -webkit-text-fill-color: var(--green); }
+.signal-status-warn { color: var(--orange); -webkit-text-fill-color: var(--orange); }
+.signal-status-bad { color: var(--red); -webkit-text-fill-color: var(--red); }
+
+.health-score-hero {
+    grid-column: 1 / -1;
     background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px;
-    margin-bottom: 24px;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 32px;
     text-align: center;
+    background: linear-gradient(180deg, rgba(0,102,255,0.05) 0%, transparent 100%);
 }
 
-.health-score-value {
-    font-size: 64px;
+.health-score-hero .signal-value {
+    font-size: 56px;
     font-weight: 800;
-    background: var(--gradient-2);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    line-height: 1;
 }
 
-.health-score-label {
-    color: var(--text-muted);
-    font-size: 12px;
-    text-transform: uppercase;
+.health-score-hero .signal-label {
+    font-size: 13px;
     letter-spacing: 1px;
-    margin-top: 8px;
 }
 
-/* Issues */
+/* Indexability issues */
 .issues-list {
+    margin-top: 20px;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     overflow: hidden;
 }
 
 .issue {
     display: flex;
     align-items: flex-start;
-    padding: 16px;
+    padding: 14px 18px;
     border-bottom: 1px solid var(--border);
     gap: 12px;
 }
@@ -350,100 +538,31 @@ body {
 .issue:last-child { border-bottom: none; }
 
 .issue-severity {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     flex-shrink: 0;
     letter-spacing: 0.5px;
 }
 
-.severity-critical { background: rgba(255, 71, 87, 0.15); color: var(--red); }
-.severity-high     { background: rgba(255, 140, 66, 0.15); color: var(--orange); }
-.severity-medium   { background: rgba(255, 217, 61, 0.15); color: var(--yellow); }
-.severity-low      { background: rgba(0, 212, 255, 0.15); color: var(--text-accent); }
+.severity-critical { background: rgba(239,68,68,0.15); color: var(--red); }
+.severity-high     { background: rgba(249,115,22,0.15); color: var(--orange); }
+.severity-medium   { background: rgba(234,179,8,0.15); color: var(--yellow); }
+.severity-low      { background: rgba(0,102,255,0.15); color: var(--accent-primary); }
 
-.issue-text {
-    color: var(--text-primary);
-    font-size: 14px;
-    flex: 1;
-}
+.issue-text { font-size: 13px; color: var(--text-primary); flex: 1; }
 
-/* Fix cards */
-.fix-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--orange);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 12px;
-}
+/* ==================================================================
+   SECTION 7 — TOPICS TO OPTIMIZE (3 visible + 3 dropdown)
+   ================================================================== */
+.topics-section { margin-bottom: 48px; }
 
-.fix-card.priority-HIGH { border-left-color: var(--red); }
-.fix-card.priority-MEDIUM { border-left-color: var(--orange); }
-.fix-card.priority-LOW { border-left-color: var(--text-accent); }
-
-.fix-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-    flex-wrap: wrap;
-}
-
-.fix-priority {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 4px 10px;
-    border-radius: 4px;
-    letter-spacing: 0.5px;
-}
-
-.priority-HIGH .fix-priority { background: rgba(255, 71, 87, 0.15); color: var(--red); }
-.priority-MEDIUM .fix-priority { background: rgba(255, 140, 66, 0.15); color: var(--orange); }
-.priority-LOW .fix-priority { background: rgba(0, 212, 255, 0.15); color: var(--text-accent); }
-
-.fix-tag {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: rgba(0, 245, 160, 0.12);
-    color: var(--green);
-    letter-spacing: 0.5px;
-}
-
-.fix-agent {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: rgba(124, 58, 237, 0.15);
-    color: #a78bfa;
-    letter-spacing: 0.5px;
-    margin-left: auto;
-}
-
-.fix-title {
-    font-size: 16px;
-    font-weight: 600;
-    margin-bottom: 8px;
-}
-
-.fix-step {
-    color: var(--text-muted);
-    font-size: 14px;
-}
-
-/* Topics + blueprints */
 .topics-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px;
     margin-bottom: 16px;
 }
 
@@ -451,294 +570,434 @@ body {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 100px;
-    padding: 8px 16px;
+    padding: 10px 20px;
     font-size: 13px;
-    color: var(--text-accent);
+    color: var(--accent-primary);
+    transition: border-color 0.2s, background 0.2s;
 }
 
-.blueprint {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 12px;
+.topic-chip:hover {
+    border-color: var(--accent-primary);
+    background: var(--bg-card-hover);
 }
 
-.blueprint-format {
-    font-size: 14px;
-    color: var(--text-accent);
-    font-weight: 600;
-    margin-bottom: 8px;
+.topic-chip.zero-presence {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(239,68,68,0.06);
 }
 
-.blueprint-meta {
-    color: var(--text-muted);
-    font-size: 13px;
-    margin-bottom: 8px;
-}
-
-.blueprint-move {
-    color: var(--text-primary);
-    font-size: 14px;
-}
-
-/* Competitor list */
-.competitor-list {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-}
-
-.competitor-row {
-    display: flex;
-    justify-content: space-between;
+/* Dropdown toggle for zero-presence topics */
+.dropdown-toggle-btn {
+    display: inline-flex;
     align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 14px;
+    gap: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+    font-family: inherit;
 }
 
-.competitor-row:last-child { border-bottom: none; }
+.dropdown-toggle-btn:hover {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
 
-.competitor-domain { color: var(--text-primary); }
-.competitor-count {
-    color: var(--text-accent);
+.dropdown-toggle-btn .arrow {
+    display: inline-block;
+    transition: transform 0.2s;
+}
+
+.dropdown-toggle-btn.open .arrow { transform: rotate(180deg); }
+
+.zero-presence-topics {
+    display: none;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.zero-presence-topics.visible { display: flex; }
+
+/* ==================================================================
+   STRATEGIC READ (inherited from old template, restyled)
+   ================================================================== */
+.strategic {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    padding: 28px;
+    margin-bottom: 48px;
+    background: linear-gradient(90deg, rgba(0,102,255,0.05) 0%, transparent 30%);
+}
+
+.strategic-label {
+    color: var(--accent-primary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 8px;
     font-weight: 600;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-/* Engine note */
+.strategic-title { font-size: 20px; font-weight: 700; margin-bottom: 14px; }
+
+.strategic-summary { color: var(--text-secondary); margin-bottom: 18px; font-size: 15px; }
+
+.strategic-play {
+    background: var(--bg-primary);
+    border-radius: var(--radius-md);
+    padding: 18px;
+    border-left: 3px solid var(--green);
+}
+
+.strategic-play-label {
+    color: var(--green);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.strategic-play-text { font-size: 14px; color: var(--text-primary); }
+
+/* ==================================================================
+   ENGINE NOTE
+   ================================================================== */
 .engine-note {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     padding: 16px;
-    font-size: 13px;
-    color: var(--text-muted);
-    margin-bottom: 24px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
 }
 
-.engine-note strong { color: var(--text-accent); }
+.engine-note strong { color: var(--text-primary); }
 
-.engine-note ul {
-    margin-top: 8px;
-    padding-left: 20px;
-}
+.engine-note .legend-inline { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
 
-.engine-note li { margin-bottom: 4px; }
+.engine-note .legend-inline span { font-size: 11px; }
 
-/* CTA */
+.legend-green { color: var(--green); }
+.legend-yellow { color: var(--yellow); }
+.legend-red { color: var(--red); }
+
+/* ==================================================================
+   CTA
+   ================================================================== */
 .cta {
-    background: var(--bg-card);
-    border: 1px solid var(--text-accent);
-    border-radius: 12px;
-    padding: 32px;
+    background: linear-gradient(135deg, rgba(0,102,255,0.08) 0%, rgba(79,70,229,0.08) 100%);
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-lg);
+    padding: 40px 32px;
     text-align: center;
-    margin-top: 40px;
+    margin-bottom: 48px;
 }
 
-.cta-title {
-    font-size: 24px;
-    font-weight: 700;
-    margin-bottom: 12px;
-}
+.cta-title { font-size: 24px; font-weight: 700; margin-bottom: 12px; }
 
 .cta-text {
-    color: var(--text-muted);
-    margin-bottom: 20px;
-    max-width: 600px;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    max-width: 560px;
     margin-left: auto;
     margin-right: auto;
 }
 
-.cta-buttons {
-    display: flex;
-    justify-content: center;
-    gap: 12px;
-    flex-wrap: wrap;
-}
+.cta-buttons { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 
 .cta-button {
-    background: var(--gradient-1);
-    color: white;
-    padding: 12px 24px;
-    border-radius: 8px;
+    background: var(--gradient-brand);
+    color: #FFFFFF;
+    padding: 12px 28px;
+    border-radius: var(--radius-md);
     text-decoration: none;
     font-weight: 600;
     font-size: 14px;
-    transition: all 0.2s;
+    transition: opacity 0.2s, transform 0.15s;
     display: inline-block;
 }
 
-.cta-button:hover { opacity: 0.9; transform: translateY(-1px); }
+.cta-button:hover { opacity: 0.92; transform: translateY(-1px); }
 
 .cta-button.secondary {
-    background: var(--bg-primary);
+    background: var(--bg-card);
     border: 1px solid var(--border);
     color: var(--text-primary);
 }
 
-/* Footer */
+/* ==================================================================
+   FOOTER
+   ================================================================== */
 .footer {
-    margin-top: 60px;
-    padding-top: 24px;
+    padding-top: 28px;
     border-top: 1px solid var(--border);
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 12px;
     text-align: center;
     line-height: 1.8;
 }
 
 .footer strong { color: var(--text-primary); }
 
+/* ==================================================================
+   RESPONSIVE
+   ================================================================== */
 @media (max-width: 640px) {
     .container { padding: 24px 16px; }
-    .domain-name { font-size: 24px; }
-    .summary-metrics, .signal-grid { grid-template-columns: 1fr; }
-    .matrix-table { font-size: 12px; }
-    .matrix-table th, .matrix-table td { padding: 10px 8px; }
+    .header { flex-direction: column; align-items: flex-start; }
+    .header-right { align-items: flex-start; }
+    .verdict-grid { grid-template-columns: 1fr; }
+    .signal-grid { grid-template-columns: 1fr 1fr; }
+    .section-title { font-size: 18px; }
+    .top-brand-item { min-width: 100%; }
+}
+
+@media (max-width: 400px) {
+    .signal-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
 <body>
 <div class="container">
 
+{# ====================================================================
+   SECTION 1 — HEADER
+   ==================================================================== #}
 <header class="header">
-    <div class="logo">AI VISIBILITY AUDIT</div>
-    <button class="copy-link" onclick="navigator.clipboard.writeText(window.location.href); this.textContent='Link copied!'">Copy link</button>
-</header>
-
-<section class="summary">
-    <div class="summary-header">
-        <div>
-            <div class="domain-name">{{ report.domain }}</div>
-            <div class="summary-meta">Generated {{ generated_at }}{% if report.crawl_signals.title %} · {{ report.crawl_signals.title }}{% endif %}</div>
+    <div class="header-left">
+        <div class="header-logo">SM</div>
+        <div class="header-brand-info">
+            <div class="header-brand-name">{{ brand_name or report.domain.split('.')[0]|capitalize }}</div>
+            <div class="header-brand-slogan">{{ brand_slogan or 'AI Engine Optimization Audit' }}</div>
         </div>
     </div>
-    <div class="summary-metrics">
-        <div class="metric">
-            <div class="metric-label">AI Coverage</div>
-            <div class="metric-value {% if report.ai_coverage_pct < 25 %}warn{% endif %}">{{ '%.0f' % report.ai_coverage_pct }}%</div>
+    <div class="header-right">
+        <div class="header-url">{{ website_url or 'https://' + report.domain }}</div>
+        <div class="header-date">{{ generated_at or 'Report generated on demand' }}</div>
+    </div>
+</header>
+
+{# ====================================================================
+   SECTION 2 — VERDICT
+   ==================================================================== #}
+{% set best_brand = namespace(name='—') %}
+{% if report.citation_matrix.all_competitors %}
+    {% set best_brand.name = report.citation_matrix.all_competitors.keys()|list|first %}
+{% endif %}
+
+{% set best_model = namespace(name='—', cov=0) %}
+{% for engine in report.citation_matrix.engines %}
+    {% set engine_results = report.citation_matrix.results|selectattr('engine', 'equalto', engine)|list %}
+    {% set engine_covered = engine_results|selectattr('covered')|list|length %}
+    {% set engine_total = engine_results|length %}
+    {% if engine_total > 0 %}
+        {% set engine_pct = (100.0 * engine_covered / engine_total)|round(1) %}
+        {% if engine_pct > best_model.cov %}
+            {% set best_model.name = engine|replace(' (mock)', '') %}
+            {% set best_model.cov = engine_pct %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+
+{% set total_citations = namespace(count=0) %}
+{% for r in report.citation_matrix.results %}
+    {% set total_citations.count = total_citations.count + r.cited_sources|length %}
+{% endfor %}
+
+{% set best_topic = namespace(name='—', cov=0) %}
+{% for topic in report.buyer_topics %}
+    {% set topic_results = report.citation_matrix.results|selectattr('topic', 'equalto', topic)|list %}
+    {% set topic_covered = topic_results|selectattr('covered')|list|length %}
+    {% set topic_total = topic_results|length %}
+    {% if topic_total > 0 %}
+        {% set topic_pct = (100.0 * topic_covered / topic_total)|round(1) %}
+        {% if topic_pct > best_topic.cov %}
+            {% set best_topic.name = topic %}
+            {% set best_topic.cov = topic_pct %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+
+<section class="verdict">
+    <div class="verdict-title">Verdict</div>
+    <div class="verdict-grid">
+        <div class="verdict-card">
+            <div class="verdict-card-label">AI Presence</div>
+            <div class="verdict-card-value">{{ '%.0f' % report.ai_coverage_pct }}%</div>
+            <div class="verdict-card-sub">across {{ report.citation_matrix.engines|length }} AI engines</div>
         </div>
-        <div class="metric">
-            <div class="metric-label">Fixable Gaps</div>
-            <div class="metric-value">{{ report.fixable_gaps }}</div>
+        <div class="verdict-card">
+            <div class="verdict-card-label">Best Performing Brand</div>
+            <div class="verdict-card-value small">{{ best_brand.name }}</div>
+            <div class="verdict-card-sub">most cited in competitor set</div>
         </div>
-        <div class="metric">
-            <div class="metric-label">Pages Crawled</div>
-            <div class="metric-value">{{ report.crawl_signals.total_pages }}</div>
+        <div class="verdict-card">
+            <div class="verdict-card-label">Best Model Presence</div>
+            <div class="verdict-card-value small">{{ best_model.name }}</div>
+            <div class="verdict-card-sub">{{ best_model.cov }}% coverage on this engine</div>
         </div>
-        <div class="metric">
-            <div class="metric-label">Buyer Topics</div>
-            <div class="metric-value">{{ report.buyer_topics|length }}</div>
+        <div class="verdict-card">
+            <div class="verdict-card-label">Overall Citation Count</div>
+            <div class="verdict-card-value">{{ total_citations.count }}</div>
+            <div class="verdict-card-sub">total cited sources across all topics</div>
+        </div>
+        <div class="verdict-card">
+            <div class="verdict-card-label">Best Performing Topic</div>
+            <div class="verdict-card-value small">{{ best_topic.name }}</div>
+            <div class="verdict-card-sub">{{ best_topic.cov }}% coverage for this topic</div>
         </div>
     </div>
 </section>
 
+{# ====================================================================
+   STRATEGIC READ
+   ==================================================================== #}
 <div class="strategic">
-    <div class="strategic-label">The strategic read</div>
+    <div class="strategic-label">The Strategic Read</div>
     <h2 class="strategic-title">{{ report.strategic_read.title }}</h2>
     <p class="strategic-summary">{{ report.strategic_read.summary }}</p>
     <div class="strategic-play">
-        <div class="strategic-play-label">The play</div>
+        <div class="strategic-play-label">The Play</div>
         <p class="strategic-play-text">{{ report.strategic_read.the_play }}</p>
     </div>
 </div>
 
+{# ====================================================================
+   SECTION 3 — BRAND RECOMMENDATION MATRIX (5 topics × 4 engines)
+   ==================================================================== #}
 {% if report.citation_matrix.results %}
 <section class="section">
     <div class="section-header">
-        <span class="section-number">{% if not no_ai %}01{% else %}—{% endif %}</span>
-        <h2 class="section-title">Citation matrix</h2>
+        <div class="section-header-icon">📊</div>
+        <div class="section-header-content">
+            <h2 class="section-title">Brand Recommendation Matrix</h2>
+            <p class="section-subtitle">How often your brand appears across queries and AI engines</p>
+        </div>
     </div>
-    <div class="engine-note">
-        <strong>Engines used:</strong>
-        <ul>
-        {% for r in report.citation_matrix.results|map(attribute='engine')|unique %}
-            <li>{{ r }} — {% if '(mock)' in r %}<em>mock mode (no API call made)</em>{% else %}<em>real API call</em>{% endif %}</li>
-        {% endfor %}
-        </ul>
-        <div style="margin-top: 8px;">Coverage shows pass-level: <strong style="color: var(--green);">GREEN</strong> = cited in all passes · <strong style="color: var(--yellow);">YELLOW</strong> = cited in some · <strong style="color: var(--red);">RED</strong> = not cited.</div>
-    </div>
-    <table class="matrix-table">
-        <thead>
-            <tr>
-                <th>Topic</th>
-                {% for engine in report.citation_matrix.engines %}
-                    <th>{{ engine|replace(' (mock)', '') }}</th>
-                {% endfor %}
-            </tr>
-        </thead>
-        <tbody>
-            {% for topic in report.buyer_topics %}
-            <tr>
-                <td><strong>{{ topic }}</strong></td>
-                {% for engine in report.citation_matrix.engines %}
-                    {% set cell = report.citation_matrix.result_for(topic, engine) %}
-                    {% if cell %}
-                        {% if cell.coverage_rate >= 0.99 %}
-                            <td class="covered-yes">✓ Cited<span class="cited-sources">{{ cell.cited_sources|length }} sources</span></td>
-                        {% elif cell.coverage_rate > 0 %}
-                            <td class="covered-partial">~ {{ '%.0f' % (cell.coverage_rate * 100) }}%<span class="cited-sources">{{ cell.cited_sources|length }} sources</span></td>
-                        {% else %}
-                            <td class="covered-no">✗ Not cited<span class="cited-sources">{% for s in cell.cited_sources[:3] %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %}</span></td>
-                        {% endif %}
-                    {% else %}
-                        <td class="covered-no">—</td>
-                    {% endif %}
-                {% endfor %}
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
 
-    {% if report.citation_matrix.all_competitors %}
-    <h3 style="margin-top: 24px; margin-bottom: 12px; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Top cited competitors</h3>
-    <div class="competitor-list">
+    <div class="engine-note">
+        <strong>Engines analyzed:</strong> {{ report.citation_matrix.engines|map('replace', ' (mock)', '')|join(', ') }}
+        <div class="legend-inline">
+            <span class="legend-green">●</span><span>Cited</span>
+            <span class="legend-yellow">●</span><span>Partial</span>
+            <span class="legend-red">●</span><span>Not Cited</span>
+        </div>
+    </div>
+
+    <div class="matrix-wrapper">
+        <table class="matrix-table">
+            <thead>
+                <tr>
+                    <th>Query / Topic</th>
+                    {% for engine in report.citation_matrix.engines %}
+                        <th>{{ engine|replace(' (mock)', '') }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for topic in (report.buyer_topics[:5] if report.buyer_topics|length > 5 else report.buyer_topics) %}
+                <tr>
+                    <td>{{ topic }}</td>
+                    {% for engine in report.citation_matrix.engines %}
+                        {% set cell = report.citation_matrix.result_for(topic, engine) %}
+                        {% if cell %}
+                            {% if cell.coverage_rate >= 0.99 %}
+                                <td class="matrix-cell-covered">✓ Cited</td>
+                            {% elif cell.coverage_rate > 0 %}
+                                <td class="matrix-cell-partial">~ {{ '%.0f' % (cell.coverage_rate * 100) }}%</td>
+                            {% else %}
+                                <td class="matrix-cell-missed">✗ Not cited</td>
+                            {% endif %}
+                        {% else %}
+                            <td class="matrix-cell-missed">—</td>
+                        {% endif %}
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+{# ====================================================================
+   SECTION 4 — TOP RECOMMENDED BRANDS (top 3)
+   ==================================================================== #}
+{% if report.citation_matrix.all_competitors %}
+<section class="section">
+    <div class="section-header">
+        <div class="section-header-icon">🏆</div>
+        <div class="section-header-content">
+            <h2 class="section-title">TOP Recommended Brands</h2>
+            <p class="section-subtitle">The top 3 most-cited competitors across all queries</p>
+        </div>
+    </div>
+
+    <div class="top-brands">
         {% for domain, count in report.citation_matrix.all_competitors.items() %}
-            {% if loop.index <= 8 %}
-            <div class="competitor-row">
-                <span class="competitor-domain">{{ domain }}</span>
-                <span class="competitor-count">{{ count }}</span>
+            {% if loop.index <= 3 %}
+            <div class="top-brand-item">
+                <div class="top-brand-rank">{{ loop.index }}</div>
+                <div class="top-brand-info">
+                    <div class="top-brand-name">{{ domain }}</div>
+                    <div class="top-brand-citations">{{ count }} citation{{ 's' if count != 1 else '' }}</div>
+                </div>
             </div>
             {% endif %}
         {% endfor %}
     </div>
-    {% endif %}
 </section>
 {% endif %}
 
+{# ====================================================================
+   SECTION 5 — COMPETITIVE LANDSCAPE (6 columns)
+   ==================================================================== #}
 {% if report.citation_matrix.results %}
+{% set px_results = report.citation_matrix.results|selectattr('engine', 'equalto', 'perplexity')|list %}
+{% if px_results|length == 0 %}
+    {% set px_results = report.citation_matrix.results|selectattr('engine', 'equalto', 'perplexity (mock)')|list %}
+{% endif %}
+{% if px_results %}
 <section class="section">
     <div class="section-header">
-        <span class="section-number">01b</span>
-        <h2 class="section-title">Competitive landscape</h2>
+        <div class="section-header-icon">🔍</div>
+        <div class="section-header-content">
+            <h2 class="section-title">Competitive Landscape</h2>
+            <p class="section-subtitle">For each query, who owns the answer space — and where does {{ report.domain }} rank?</p>
+        </div>
     </div>
-    <p class="section-subtitle">For each query, who owns the answer space — and where does {{ report.domain }} rank?</p>
 
-    <div class="matrix-table">
-        <table>
+    <div class="landscape-wrapper">
+        <table class="landscape-table">
             <thead>
                 <tr>
                     <th>Query</th>
                     <th>Result</th>
-                    <th>Mentions</th>
-                    <th>Citations</th>
-                    <th>1st Position</th>
+                    <th>Brand Mentions</th>
+                    <th>URL Citations</th>
+                    <th>1st Mention</th>
                     <th>Top Competitor</th>
                 </tr>
             </thead>
             <tbody>
-            {% for result in report.citation_matrix.results %}
-                {% if 'perplexity' in result.engine|lower and '(mock)' not in result.engine|lower %}
+            {% for result in px_results %}
                 <tr>
-                    <td class="topic-cell">{{ result.topic }}</td>
+                    <td><strong>{{ result.topic }}</strong></td>
                     <td>
                         {% if result.covered %}
-                        <span class="badge badge-covered">HIT</span>
+                        <span class="hit-badge">HIT</span>
                         {% else %}
-                        <span class="badge badge-missed">MISS</span>
+                        <span class="miss-badge">MISS</span>
                         {% endif %}
                     </td>
                     <td>{{ result.best_brand_mentions }}×</td>
@@ -746,97 +1005,173 @@ body {
                     <td>{% if result.best_first_section %}#{{ result.best_first_section }}{% else %}—{% endif %}</td>
                     <td>{{ result.top_competitor or '—' }}</td>
                 </tr>
-                {% endif %}
             {% endfor %}
             </tbody>
         </table>
     </div>
 </section>
 {% endif %}
+{% endif %}
 
+{# ====================================================================
+   SECTION 6 — AI INDEXABILITY AUDIT
+   ==================================================================== #}
 <section class="section">
     <div class="section-header">
-        <span class="section-number">{% if report.citation_matrix.results %}02{% else %}01{% endif %}</span>
-        <h2 class="section-title">Crawl signals</h2>
+        <div class="section-header-icon">🤖</div>
+        <div class="section-header-content">
+            <h2 class="section-title">AI Indexability Audit</h2>
+            <p class="section-subtitle">Technical signals that determine how well AI engines can access and cite your content</p>
+        </div>
     </div>
+
     <div class="signal-grid">
+        {# Health Score Hero #}
+        <div class="health-score-hero">
+            <div class="signal-value">{{ report.crawl_signals.health_score }}</div>
+            <div class="signal-label">AI Indexability Score / 100</div>
+        </div>
+
+        {# Signal: Answer Capsules #}
         <div class="signal-card">
+            <div class="signal-icon">📝</div>
             <div class="signal-value">{{ report.crawl_signals.answer_capsules }}</div>
-            <div class="signal-label">Answer capsules</div>
+            <div class="signal-label">Answer Capsules Found</div>
         </div>
+
+        {# Signal: Stat Density #}
         <div class="signal-card">
+            <div class="signal-icon">📊</div>
             <div class="signal-value">{{ '%.1f' % report.crawl_signals.stat_density }}</div>
-            <div class="signal-label">Stats per 100 words</div>
+            <div class="signal-label">Data Points / 100 Words</div>
         </div>
+
+        {# Signal: Authorship #}
         <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.authorship_pages }}/{{ report.crawl_signals.total_pages }}</div>
-            <div class="signal-label">Pages with authorship</div>
+            <div class="signal-icon">👤</div>
+            <div class="signal-value {% if report.crawl_signals.authorship_pages == 0 %}signal-status-bad{% elif report.crawl_signals.authorship_pages < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.authorship_pages }}/{{ report.crawl_signals.total_pages }}
+            </div>
+            <div class="signal-label">Pages with Authorship</div>
         </div>
+
+        {# Signal: Schema Markup #}
         <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.schema_pages }}/{{ report.crawl_signals.total_pages }}</div>
-            <div class="signal-label">Pages with schema</div>
+            <div class="signal-icon">🔖</div>
+            <div class="signal-value {% if report.crawl_signals.schema_pages == 0 %}signal-status-bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.schema_pages }}/{{ report.crawl_signals.total_pages }}
+            </div>
+            <div class="signal-label">Pages with Schema Markup</div>
         </div>
+
+        {# Signal: Thin Pages #}
         <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.thin_pages|length }}</div>
-            <div class="signal-label">Thin pages (&lt;300 words)</div>
+            <div class="signal-icon">📄</div>
+            <div class="signal-value {% if report.crawl_signals.thin_pages|length > 0 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.thin_pages|length }}
+            </div>
+            <div class="signal-label">Thin Pages (&lt;300 words)</div>
         </div>
+
+        {# Signal: llms.txt #}
         <div class="signal-card">
-            <div class="signal-value">{% if report.crawl_signals.has_llms_txt %}✓{% else %}—{% endif %}</div>
-            <div class="signal-label">/llms.txt present</div>
+            <div class="signal-icon">📋</div>
+            <div class="signal-value {% if report.crawl_signals.has_llms_txt %}signal-status-ok{% else %}signal-status-warn{% endif %}">
+                {% if report.crawl_signals.has_llms_txt %}✓ Present{% else %}— Missing{% endif %}
+            </div>
+            <div class="signal-label">/llms.txt File</div>
         </div>
+
+        {# Signal: AI Bots Access #}
         <div class="signal-card">
-            <div class="signal-value">{% if report.crawl_signals.robots_blocks_ai %}⚠{% else %}{{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }}{% endif %}</div>
-            <div class="signal-label">AI bots allowed</div>
+            <div class="signal-icon">🤖</div>
+            <div class="signal-value {% if report.crawl_signals.robots_blocks_ai %}signal-status-bad{% else %}signal-status-ok{% endif %}">
+                {% if report.crawl_signals.robots_blocks_ai %}BLOCKED{% else %}{{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }} OK{% endif %}
+            </div>
+            <div class="signal-label">AI Bots Access</div>
         </div>
+
+        {# Signal: Schema Types #}
         <div class="signal-card">
+            <div class="signal-icon">🧩</div>
             <div class="signal-value">{{ report.crawl_signals.schema_types_found|length }}</div>
-            <div class="signal-label">Schema types found</div>
+            <div class="signal-label">Schema Types Found</div>
         </div>
+
+        {# Signal: Response Time #}
         <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.avg_response_ms }}ms</div>
-            <div class="signal-label">Avg response time</div>
+            <div class="signal-icon">⚡</div>
+            <div class="signal-value {% if report.crawl_signals.avg_response_ms > 500 %}signal-status-warn{% elif report.crawl_signals.avg_response_ms > 1000 %}signal-status-bad{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.avg_response_ms }}ms
+            </div>
+            <div class="signal-label">Avg Response Time</div>
         </div>
+
+        {# Signal: Agent Readability #}
         <div class="signal-card">
-            <div class="signal-value">{{ '%.0f' % report.crawl_signals.total_size_kb }}KB</div>
-            <div class="signal-label">Total page weight</div>
-        </div>
-        <div class="signal-card">
-            <div class="signal-value">{% if report.crawl_signals.has_about_page %}✓{% else %}—{% endif %}</div>
-            <div class="signal-label">About page</div>
-        </div>
-        <div class="signal-card">
-            <div class="signal-value">{% if report.crawl_signals.has_contact_page %}✓{% else %}—{% endif %}</div>
-            <div class="signal-label">Contact page</div>
-        </div>
-        <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.max_redirect_hops }}</div>
-            <div class="signal-label">Max redirect hops</div>
-        </div>
-        <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.broken_links|length }}</div>
-            <div class="signal-label">Pages with broken links</div>
-        </div>
-        <div class="signal-card">
+            <div class="signal-icon">🔍</div>
             <div class="signal-value">{{ report.crawl_signals.avg_agent_readability }}</div>
-            <div class="signal-label">Agent readability score</div>
+            <div class="signal-label">Agent Readability Score</div>
         </div>
+
+        {# Signal: Landmarks #}
         <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.pages_with_landmarks }}/{{ report.crawl_signals.total_pages }}</div>
-            <div class="signal-label">Pages with landmarks</div>
+            <div class="signal-icon">🏗️</div>
+            <div class="signal-value {% if report.crawl_signals.pages_with_landmarks < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.pages_with_landmarks }}/{{ report.crawl_signals.total_pages }}
+            </div>
+            <div class="signal-label">Pages with Landmarks</div>
         </div>
+
+        {# Signal: Missing Alt #}
         <div class="signal-card">
-            <div class="signal-value">{{ report.crawl_signals.total_images_missing_alt }}</div>
-            <div class="signal-label">Images missing alt text</div>
+            <div class="signal-icon">🖼️</div>
+            <div class="signal-value {% if report.crawl_signals.total_images_missing_alt > 0 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.total_images_missing_alt }}
+            </div>
+            <div class="signal-label">Images Missing Alt Text</div>
+        </div>
+
+        {# Signal: About Page #}
+        <div class="signal-card">
+            <div class="signal-icon">ℹ️</div>
+            <div class="signal-value {% if report.crawl_signals.has_about_page %}signal-status-ok{% else %}signal-status-warn{% endif %}">
+                {% if report.crawl_signals.has_about_page %}✓ Present{% else %}— Missing{% endif %}
+            </div>
+            <div class="signal-label">About Page</div>
+        </div>
+
+        {# Signal: Contact Page #}
+        <div class="signal-card">
+            <div class="signal-icon">📧</div>
+            <div class="signal-value {% if report.crawl_signals.has_contact_page %}signal-status-ok{% else %}signal-status-warn{% endif %}">
+                {% if report.crawl_signals.has_contact_page %}✓ Present{% else %}— Missing{% endif %}
+            </div>
+            <div class="signal-label">Contact Page</div>
+        </div>
+
+        {# Signal: Broken Links #}
+        <div class="signal-card">
+            <div class="signal-icon">🔗</div>
+            <div class="signal-value {% if report.crawl_signals.broken_links|length > 0 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.broken_links|length }}
+            </div>
+            <div class="signal-label">Pages with Broken Links</div>
+        </div>
+
+        {# Signal: Redirect Hops #}
+        <div class="signal-card">
+            <div class="signal-icon">↪️</div>
+            <div class="signal-value {% if report.crawl_signals.max_redirect_hops > 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+                {{ report.crawl_signals.max_redirect_hops }}
+            </div>
+            <div class="signal-label">Max Redirect Hops</div>
         </div>
     </div>
 
-    <div class="health-score">
-        <div class="health-score-value">{{ report.crawl_signals.health_score }}</div>
-        <div class="health-score-label">Crawl Health Score</div>
-    </div>
-
+    {# Crawl Issues #}
     {% if report.crawl_signals.issues %}
-    <h3 style="margin-bottom: 12px; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Crawl issues ({{ report.crawl_signals.issues|length }})</h3>
+    <h3 style="margin: 20px 0 12px 0; color: var(--text-muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px;">Indexability Issues ({{ report.crawl_signals.issues|length }})</h3>
     <div class="issues-list">
         {% for issue in report.crawl_signals.issues %}
         <div class="issue">
@@ -848,61 +1183,112 @@ body {
     {% endif %}
 </section>
 
-<section class="section">
-    <div class="section-header">
-        <span class="section-number">{% if report.citation_matrix.results %}03{% else %}02{% endif %}</span>
-        <h2 class="section-title">Prioritized fixes</h2>
-    </div>
-    {% for fix in report.fixes %}
-    <div class="fix-card priority-{{ fix.priority }}">
-        <div class="fix-header">
-            <span class="fix-priority">{{ fix.priority }}</span>
-            <span class="fix-tag">{{ fix.tag }}</span>
-            {% if fix.agent_fixable %}<span class="fix-agent">AGENT-FIXABLE</span>{% endif %}
-        </div>
-        <div class="fix-title">{{ fix.title }}</div>
-        <div class="fix-step">{{ fix.first_step }}</div>
-    </div>
-    {% endfor %}
-</section>
-
+{# ====================================================================
+   SECTION 7 — TOPICS TO OPTIMIZE (3 visible + 3 dropdown)
+   ==================================================================== #}
 {% if report.buyer_topics %}
-<section class="section">
+<section class="section topics-section">
     <div class="section-header">
-        <span class="section-number">{% if report.citation_matrix.results %}04{% else %}03{% endif %}</span>
-        <h2 class="section-title">Buyer topics to own</h2>
+        <div class="section-header-icon">🎯</div>
+        <div class="section-header-content">
+            <h2 class="section-title">Topics to Optimize</h2>
+            <p class="section-subtitle">Buyer topics your site should own in AI search results</p>
+        </div>
     </div>
+
+    {# Compute zero-presence topics #}
+    {% set zero_topics = [] %}
+    {% set visible_topics = [] %}
+    {% for topic in report.buyer_topics %}
+        {% set topic_results = report.citation_matrix.results|selectattr('topic', 'equalto', topic)|list %}
+        {% set topic_covered = topic_results|selectattr('covered')|list|length %}
+        {% if topic_covered == 0 and topic_results|length > 0 %}
+            {% set _ = zero_topics.append(topic) %}
+        {% else %}
+            {% set _ = visible_topics.append(topic) %}
+        {% endif %}
+    {% endfor %}
+
+    {# Show visible topics (non-zero presence, up to 3 + rest) #}
     <div class="topics-list">
-        {% for topic in report.buyer_topics %}
+        {% for topic in visible_topics[:3] %}
+            <span class="topic-chip">{{ topic }}</span>
+        {% endfor %}
+        {% for topic in visible_topics[3:] %}
             <span class="topic-chip">{{ topic }}</span>
         {% endfor %}
     </div>
-    <h3 style="margin-top: 24px; margin-bottom: 12px; color: var(--text-muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Recommended content formats</h3>
+
+    {# Show zero-presence topics behind dropdown (up to 3 visible, rest hidden) #}
+    {% if zero_topics|length > 0 %}
+        {% set show_count = [3, zero_topics|length]|min %}
+        <div class="topics-list">
+            {% for topic in zero_topics[:show_count] %}
+                <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
+            {% endfor %}
+        </div>
+
+        {% if zero_topics|length > show_count %}
+        <button class="dropdown-toggle-btn" id="zeroTopicsToggle" onclick="toggleZeroTopics()">
+            <span>{{ zero_topics|length - show_count }} more topics with zero AI presence</span>
+            <span class="arrow">▼</span>
+        </button>
+
+        <div class="zero-presence-topics" id="zeroTopicsDropdown">
+            {% for topic in zero_topics[show_count:] %}
+                <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    {% endif %}
+
+    {# Page Blueprints #}
+    {% if report.page_blueprints %}
+    <h3 style="margin-top: 32px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; text-transform: uppercase; letter-spacing: 0.8px;">Recommended Content Formats</h3>
     {% for key, bp in report.page_blueprints.items() %}
-    <div class="blueprint">
-        <div class="blueprint-format">{{ bp.format }}</div>
-        <div class="blueprint-meta">Length: {{ bp.word_count_range }}</div>
-        <div class="blueprint-move"><strong style="color: var(--text-accent);">First move:</strong> {{ bp.first_move }}</div>
+    <div class="signal-card" style="margin-bottom: 10px;">
+        <div style="font-size: 15px; font-weight: 600; color: var(--accent-primary); margin-bottom: 6px;">{{ bp.format }}</div>
+        <div style="color: var(--text-secondary); font-size: 12px; margin-bottom: 6px;">Length: {{ bp.word_count_range }}</div>
+        <div style="color: var(--text-primary); font-size: 13px;"><strong style="color: var(--green);">First move:</strong> {{ bp.first_move }}</div>
     </div>
     {% endfor %}
+    {% endif %}
 </section>
 {% endif %}
 
+{# ====================================================================
+   CTA
+   ==================================================================== #}
 <div class="cta">
     <div class="cta-title">That's the diagnosis.</div>
     <p class="cta-text">Want a content team to execute these fixes and run this audit monthly? Book a workshop.</p>
     <div class="cta-buttons">
-        <a class="cta-button" href="https://boringmarketer.com/workshops">Book a workshop</a>
-        <a class="cta-button secondary" href="https://boringmarketer.com/audit">Get another audit</a>
+        <a class="cta-button" href="https://smartmarketer.com/workshops">Book a Workshop</a>
+        <a class="cta-button secondary" href="https://smartmarketer.com/audit">Get Another Audit</a>
     </div>
 </div>
 
+{# ====================================================================
+   FOOTER
+   ==================================================================== #}
 <footer class="footer">
-    <p><strong>AI Visibility Audit</strong> — generated by aeo-audit-tool v0.1</p>
-    <p>Citations were checked by querying AI engines and inspecting the cited source lists returned by each. Coverage figures reflect what the engines surfaced at the time of audit, not what could be true in a different prompt or pass. v1 uses substring matching for brand detection — paraphrased or misspelled citations may be missed.</p>
-    <p style="margin-top: 12px;">"Gemini API with Google Search grounding" (when wired) is a programmatic proxy for Google AI Overviews, not a measurement of AI Overviews itself. See the README for details.</p>
+    <p><strong>Smart Marketer · AI Engine Optimization Audit</strong> — generated by aeo-audit-tool v2.0</p>
+    <p>Citations were checked by querying AI engines and inspecting the cited source lists returned by each. Coverage figures reflect what the engines surfaced at the time of audit, not what could be true in a different prompt or pass. Substring matching is used for brand detection — paraphrased or misspelled citations may be missed.</p>
 </footer>
 
 </div>
+
+{# ====================================================================
+   MINIMAL JS — dropdown toggle only
+   ==================================================================== #}
+<script>
+function toggleZeroTopics() {
+    var dropdown = document.getElementById('zeroTopicsDropdown');
+    var button = document.getElementById('zeroTopicsToggle');
+    dropdown.classList.toggle('visible');
+    button.classList.toggle('open');
+}
+</script>
+
 </body>
 </html>

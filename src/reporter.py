@@ -7,12 +7,21 @@ HTML file to the output directory.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.analyzer import AuditReport
+
+
+def _brand_name(domain: str) -> str:
+    """Humanize a domain name for branding: 'paretotalent.com' -> 'Pareto Talent'."""
+    bare = domain.split(".")[0]
+    # CamelCase split
+    parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare).split()
+    return " ".join(p.capitalize() for p in parts)
 
 
 def generate_report(report: AuditReport, output_dir: str = "output", no_ai: bool = False) -> str:
@@ -34,6 +43,9 @@ def generate_report(report: AuditReport, output_dir: str = "output", no_ai: bool
         report=report,
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
         no_ai=no_ai,
+        brand_name=_brand_name(report.domain),
+        brand_slogan="AI Engine Optimization Audit",
+        website_url=f"https://{report.domain}",
     )
 
     out_dir = Path(output_dir)
