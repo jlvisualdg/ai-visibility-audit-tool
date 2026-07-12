@@ -875,10 +875,15 @@ def _compute_health_score(result: CrawlResult) -> int:
     # ── Apply caps based on issue severity ──
     severities = result.issues_by_severity
 
+    # Cap at 60 if any critical issues
     if severities.get("critical", 0) > 0:
         score = min(score, 60)
+    # Cap at 75 if any high issues
+    elif severities.get("high", 0) > 0:
+        score = min(score, 75)
+    # Cap at 85 if any medium issues
     elif severities.get("medium", 0) > 0:
-        score = min(score, 80)
+        score = min(score, 85)
 
     return max(0, min(100, score))
 
