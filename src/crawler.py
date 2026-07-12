@@ -818,7 +818,17 @@ def _aggregate(result: CrawlResult) -> None:
 
 
 def _compute_health_score(result: CrawlResult) -> int:
-    """Composite 0-100 health score from site-level signals."""
+    """Composite 0-100 health score from site-level signals.
+
+    Caps:
+      - Score cannot exceed 80 if any medium+ severity issues exist.
+      - Score cannot exceed 60 if any critical severity issues exist.
+      - Capping is applied AFTER all bonuses and penalties.
+
+    Bonuses:
+      - About page: +5 (was +3) — AI engines use About pages for entity grounding.
+      - Contact page: +3 (was +2) — NAP signals strengthen local/AI entity recognition.
+    """
     if result.total_pages == 0:
         return 0
 
@@ -845,9 +855,9 @@ def _compute_health_score(result: CrawlResult) -> int:
 
     # v1.1 signals
     if result.has_about_page:
-        score += 3
+        score += 5  # increased from 3 — stronger signal for entity grounding
     if result.has_contact_page:
-        score += 2
+        score += 3  # increased from 2 — NAP signals matter for local/entity AI
     if result.max_redirect_hops > 1:
         score -= 3
     if result.broken_links:
@@ -861,6 +871,14 @@ def _compute_health_score(result: CrawlResult) -> int:
     if result.pages_with_landmarks == 0:
         score -= 5
     score += min(5, result.pages_with_landmarks)
+
+    # ── Apply caps based on issue severity ──
+    severities = result.issues_by_severity
+
+    if severities.get("critical", 0) > 0:
+        score = min(score, 60)
+    elif severities.get("medium", 0) > 0:
+        score = min(score, 80)
 
     return max(0, min(100, score))
 

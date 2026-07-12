@@ -103,11 +103,31 @@ GOOD examples: "best executive assistant matching service for founders", "top vi
 Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
 
     # 4. Call LLM for initial topics
+    topics = _call_llm_for_topics(key, prompt, timeout)
+    if topics is None:
+        return _fallback_topics(domain, n)
+
+    # 5. Validate and retry: reject informational queries starting with
+    #    "how to", "cost of", "reviews of", etc.  Up to 2 retries.
+    topics = _validate_and_retry_topics(topics, key, prompt, timeout)
+
+    # 6. Post-process: replace positions [0] and [3] with keyword-variation queries
+    if len(topics) >= 5:
+        _inject_keyword_variations(topics, body, key, timeout)
+
+    return topics[:n]
+
+
+# ── LLM call helpers ──
+
+
+def _call_llm_for_topics(api_key: str, prompt: str, timeout: int) -> Optional[list[str]]:
+    """Make a single LLM call for topic generation.  Returns list of topics or None."""
     try:
         r = requests.post(
             TOPICGEN_URL,
             headers={
-                "Authorization": f"Bearer {key}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             json={
@@ -119,26 +139,118 @@ Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
             timeout=timeout,
         )
         if not r.ok:
-            return _fallback_topics(domain, n)
+            return None
 
         raw = r.json()["choices"][0]["message"]["content"].strip()
         match = re.search(r"\[.*?\]", raw, re.DOTALL)
         if match:
             topics = json.loads(match.group())
             if isinstance(topics, list) and len(topics) >= 1:
-                topics = topics[:n]
-            else:
-                return _fallback_topics(domain, n)
-        else:
-            return _fallback_topics(domain, n)
+                return topics
+        return None
     except (requests.RequestException, json.JSONDecodeError, KeyError):
-        return _fallback_topics(domain, n)
+        return None
 
-    # 5. Post-process: replace positions [0] and [3] with keyword-variation queries
-    if len(topics) >= 5:
-        _inject_keyword_variations(topics, body, key, timeout)
 
-    return topics[:n]
+# ── Validation: reject informational queries ──
+
+# Patterns that indicate an informational (non-commercial) query.
+# Case-insensitive matching against the start of the query string.
+_INFORMATIONAL_PATTERNS: list[str] = [
+    r"how\s+to\b",
+    r"how\s+do\b",
+    r"how\s+can\b",
+    r"how\s+does\b",
+    r"how\s+much\b",
+    r"how\s+many\b",
+    r"how\s+long\b",
+    r"how\s+would\b",
+    r"how\s+should\b",
+    r"how\s+are\b",
+    r"how\s+is\b",
+    r"what\s+is\b",
+    r"what\s+are\b",
+    r"what\s+does\b",
+    r"what\s+do\b",
+    r"what\s+can\b",
+    r"why\s+is\b",
+    r"why\s+are\b",
+    r"why\s+do\b",
+    r"why\s+should\b",
+    r"where\s+to\b",
+    r"where\s+can\b",
+    r"where\s+do\b",
+    r"when\s+to\b",
+    r"when\s+should\b",
+    r"cost\s+of\b",
+    r"price\s+of\b",
+    r"pricing\s+of\b",
+    r"reviews?\s+of\b",
+    r"review\s+of\b",
+    r"definition\s+of\b",
+    r"meaning\s+of\b",
+    r"difference\s+between\b",
+    r"explain\b",
+    r"describe\b",
+    r"define\b",
+]
+
+_INFORMATIONAL_RE = re.compile(
+    r"^\s*(?:" + "|".join(_INFORMATIONAL_PATTERNS) + r")",
+    re.IGNORECASE,
+)
+
+MAX_VALIDATION_RETRIES = 2
+
+
+def _count_informational_queries(topics: list[str]) -> int:
+    """Return the number of topics that match informational patterns."""
+    count = 0
+    for t in topics:
+        if _INFORMATIONAL_RE.match(t):
+            count += 1
+    return count
+
+
+def _validate_and_retry_topics(
+    topics: list[str],
+    api_key: str,
+    prompt: str,
+    timeout: int,
+) -> list[str]:
+    """Validate generated topics and retry if any are informational queries.
+
+    If any topic matches informational patterns (starting with "how to",
+    "cost of", "reviews of", etc.), re-call the LLM up to MAX_VALIDATION_RETRIES
+    times.  If a retry produces cleaner results, those are used.  Otherwise
+    the original topics are returned as-is.
+    """
+    bad_count = _count_informational_queries(topics)
+    if bad_count == 0:
+        return topics  # all clean
+
+    for attempt in range(MAX_VALIDATION_RETRIES):
+        retry_prompt = (
+            prompt
+            + f"\n\nCRITICAL: Your previous response contained {bad_count} informational query(s). "
+            + "Informational queries (starting with 'how to', 'cost of', 'reviews of', 'what is', "
+            + "'why are', 'where to', etc.) are NOT acceptable. "
+            + "Generate ONLY commercial BOTF queries using patterns like 'best X for Y', "
+            + "'hire a X', 'top X agencies 2026', 'find a X provider', 'X service pricing'. "
+            + f"Return ONLY a JSON array of {len(topics)} strings."
+        )
+        retry = _call_llm_for_topics(api_key, retry_prompt, timeout)
+        if retry is None:
+            continue  # LLM call failed, try again
+
+        new_bad = _count_informational_queries(retry)
+        if new_bad < bad_count:
+            topics = retry
+            bad_count = new_bad
+            if bad_count == 0:
+                return topics  # all clean now
+
+    return topics  # return best we have (original or improved)
 
 
 def _inject_keyword_variations(

@@ -48,6 +48,46 @@ FALSE_POSITIVE_PHRASES: set[str] = {
     "european union", "middle east", "south east",
 }
 
+# Multi-word AI-ism phrases that are common in LLM responses — these are
+# conversational filler / hedging phrases, not brand names.  Checked via
+# case-insensitive substring match because they often appear embedded in
+# longer prose (e.g. "Key considerations include ...").
+AI_ISM_PHRASES: list[str] = [
+    "key considerations",
+    "it depends",
+    "keep in mind",
+    "it's worth noting",
+    "it is worth noting",
+    "it's important to",
+    "it is important to",
+    "in conclusion",
+    "in summary",
+    "to summarize",
+    "on the other hand",
+    "that being said",
+    "having said that",
+    "at the end of the day",
+    "the bottom line",
+    "the fact that",
+    "one thing to consider",
+    "something to keep in mind",
+    "let's dive into",
+    "let me explain",
+    "here's the thing",
+    "here is the thing",
+    "the key takeaway",
+    "the main takeaway",
+    "what this means",
+    "what does this mean",
+    "to put it simply",
+    "to be clear",
+    "worth mentioning",
+    "it goes without saying",
+    "needless to say",
+    "as mentioned earlier",
+    "as noted above",
+]
+
 
 # ---------------------------------------------------------------------------
 # Regex: multi-word capitalized brand name
@@ -174,6 +214,7 @@ def _is_plausible_brand(phrase: str) -> bool:
     Filters:
       - Phrases where every word is a stop word (e.g. "For The").
       - Known false-positive geographic / generic phrases.
+      - AI-ism conversational filler phrases (substring match).
       - Phrases ≤ 5 characters total (too short to be meaningful).
     """
     words = phrase.split()
@@ -181,8 +222,14 @@ def _is_plausible_brand(phrase: str) -> bool:
         return False
     if all(w.lower() in STOP_WORDS for w in words):
         return False
-    if phrase.lower() in FALSE_POSITIVE_PHRASES:
+    phrase_lower = phrase.lower()
+    if phrase_lower in FALSE_POSITIVE_PHRASES:
         return False
+    # Check AI-ism phrases via case-insensitive substring match —
+    # these often appear embedded in longer text like "Key Considerations for ..."
+    for ai_phrase in AI_ISM_PHRASES:
+        if ai_phrase in phrase_lower:
+            return False
     # At least one word must be a "content" word (not in stop-words)
     if not any(w.lower() not in STOP_WORDS for w in words):
         return False
@@ -508,3 +555,120 @@ def aggregate_results(results: list[dict], target_domain: str) -> dict:
         "citation_count": citation_count,
         "best_topic": best_topic,
     }
+
+
+# ---------------------------------------------------------------------------
+# Extract recommended brands — list-style vs inline prose detection
+# ---------------------------------------------------------------------------
+
+# Regex for detecting numbered-list item prefixes like "1.", "2)", "1 -", etc.
+_LIST_ITEM_RE = re.compile(r"^\s*(?:\d+[\.\)]\s*|[-•]\s+)(.+)", re.MULTILINE)
+
+
+def extract_recommended_brands(response_text: str) -> dict:
+    """Detect list-style brand recommendations vs inline prose mentions.
+
+    Splits the response text by double-newlines into logical blocks.  Blocks
+    that contain at least two numbered-list / bullet items are classified as
+    "list-style" recommendations; all other blocks are "inline prose".
+
+    Within list-style blocks, we extract brand mentions via the same
+    PLAIN_BRAND / CONNECTOR_BRAND regex pipeline used by extract_brand_mentions(),
+    then pass them through _is_plausible_brand() filtering.
+
+    Args:
+        response_text: The AI engine response text to analyze.
+
+    Returns:
+        dict with keys:
+          - list_brands: list[str] — brands from list-style recommendation blocks
+          - inline_brands: list[str] — brands from inline prose blocks
+          - list_blocks: int — count of list-style blocks found
+          - inline_blocks: int — count of inline prose blocks found
+    """
+    if not response_text or not response_text.strip():
+        return {
+            "list_brands": [],
+            "inline_brands": [],
+            "list_blocks": 0,
+            "inline_blocks": 0,
+        }
+
+    # Split on 2+ consecutive newlines to get logical blocks
+    blocks = re.split(r"\n\s*\n+", response_text.strip())
+    if not blocks:
+        return {"list_brands": [], "inline_brands": [], "list_blocks": 0, "inline_blocks": 0}
+
+    list_brands: list[str] = []
+    inline_brands: list[str] = []
+    list_blocks = 0
+    inline_blocks = 0
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        # Detect list-style: block has at least 2 lines matching numbered/bullet patterns
+        lines = block.split("\n")
+        list_lines = [ln for ln in lines if _LIST_ITEM_RE.match(ln)]
+
+        if len(list_lines) >= 2:
+            # List-style block — extract brands from list lines specifically
+            list_blocks += 1
+            for ln in list_lines:
+                match = _LIST_ITEM_RE.match(ln)
+                if match:
+                    item_text = match.group(1)
+                    brands_in_item = _extract_brands_from_text(item_text)
+                    for b in brands_in_item:
+                        if b not in list_brands:
+                            list_brands.append(b)
+        else:
+            # Inline prose block — extract brands from the full block
+            inline_blocks += 1
+            brands_in_block = _extract_brands_from_text(block)
+            for b in brands_in_block:
+                if b not in inline_brands:
+                    inline_brands.append(b)
+
+    return {
+        "list_brands": list_brands,
+        "inline_brands": inline_brands,
+        "list_blocks": list_blocks,
+        "inline_blocks": inline_blocks,
+    }
+
+
+def _extract_brands_from_text(text: str) -> list[str]:
+    """Extract plausible brand names from a short text snippet.
+
+    Uses the same regex patterns as extract_brand_mentions() but returns
+    only the unique, filtered brand list (no position tracking).
+    """
+    if not text:
+        return []
+
+    raw_matches: list[tuple[int, int, str]] = []
+
+    for m in PLAIN_BRAND.finditer(text):
+        raw_matches.append((m.start(), m.end(), m.group(1)))
+
+    plain_spans = [(s, e) for s, e, _ in raw_matches]
+    for m in CONNECTOR_BRAND.finditer(text):
+        if not any(s <= m.start() < e for s, e in plain_spans):
+            raw_matches.append((m.start(), m.end(), m.group(1)))
+
+    raw_matches.sort(key=lambda x: x[0])
+    phrases = [p for _, _, p in raw_matches]
+
+    seen: set[str] = set()
+    brands: list[str] = []
+    for phrase in phrases:
+        if _is_plausible_brand(phrase):
+            key = phrase.lower()
+            if key not in seen:
+                seen.add(key)
+                brands.append(phrase)
+
+    return brands
