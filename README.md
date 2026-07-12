@@ -1,184 +1,292 @@
-# AI Visibility Audit Tool
+# AI Visibility Audit Tool v2.0
 
 A CLI tool that audits a target domain's **AI visibility** — how often it gets
-cited when buyers ask AI engines about topics it should own. Generates a
-dark-themed HTML report with a citation matrix, crawl health signals, and
-prioritized fix recommendations.
+cited when buyers ask AI engines (Perplexity, ChatGPT, Claude, Gemini) about
+topics it should own. Generates a dark-themed HTML report with a citation
+matrix, crawl health signals, brand presence scoring, and prioritized fix
+recommendations.
 
-## What it does
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://python.org)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-158%20passed-brightgreen)](tests/)
 
-For any domain you give it, this tool will:
+---
 
-1. **Crawl** the site (up to 10 pages by default) and extract AI-readiness
-   signals: answer capsules, stat density, authorship, schema, robots.txt,
-   content depth, internal linking hygiene.
-2. **Generate 4 buyer-intent topics** the site should be cited for (heuristic
-   keyword extraction, optionally LLM-enhanced).
-3. **Run a citation check** across AI engines — for each topic × platform
-   combination, query the engine, extract cited domains, and check whether
-   the target domain appears among them.
-4. **Build a citation matrix** showing topic coverage per platform and a
-   ranked list of competitor domains.
-5. **Synthesize a strategic read** with prioritized fixes (heuristic
-   baseline, optionally LLM-enhanced for richer analysis).
-6. **Render a dark-themed HTML report** ready to share with a prospect or
-   hand to a content team.
-
-## Quick start
+## Quick Start
 
 ```bash
-cd ~/Desktop/aeo-audit-tool
-source .venv/bin/activate
+# 1. Clone the repository
+git clone https://github.com/jlvisualdg/ai-visibility-audit-tool.git
+cd ai-visibility-audit-tool
+
+# 2. Create a virtual environment and install dependencies
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Run in pure mock mode (no API keys needed)
-python audit.py --domain example.com --no-ai --max-pages 3
+# 3. Copy the environment template and add your OpenRouter API key
+cp .env.example .env
+# Edit .env and set: OPENROUTER_API_KEY=sk-or-v1-your-key-here
 
-# Run with the real Perplexity engine (recommended for real audits)
-export OPENROUTER_API_KEY=sk-or-v1-...
-python audit.py --domain paretotalent.com --max-pages 10
+# 4. Run an audit
+python audit.py --domain example.com --no-ai --max-pages 3    # mock mode, no API key needed
+python audit.py --domain yoursite.com                         # real AI engine queries
+
+# 5. Open the report
+open output/yoursite.com-audit-*.html
 ```
 
-The report lands in `output/<domain>-audit-<timestamp>.html`.
+---
 
-## Engines and their modes
+## Prerequisites
 
-| Engine   | Default mode | Wire-up |
-|----------|--------------|---------|
-| Perplexity | **Real** (via OpenRouter) | Set `OPENROUTER_API_KEY`. Uses `perplexity/sonar-pro` for search-grounded responses. |
-| ChatGPT   | Mock         | Set `OPENAI_API_KEY` to enable the real Responses API (uses `web_search` tool). |
-| Claude    | Mock         | Set `ANTHROPIC_API_KEY` to enable the real Anthropic API (uses `web_search_20250305` tool). |
-| Gemini    | Mock         | Set `GOOGLE_API_KEY` to enable the real Gemini API with `google_search` grounding. |
+| Requirement | Version | Purpose |
+|-------------|---------|---------|
+| **Python** | 3.10 or higher | Runtime |
+| **OpenRouter API key** | `sk-or-v1-...` | Required for real AI engine queries. [Get one free →](https://openrouter.ai/keys) |
+| **Dependencies** | See `requirements.txt` | See [Configuration](#configuration) below |
 
-**v1 scope is mock-first, ONE real engine.** Perplexity via OpenRouter is the
-recommended starting point because it's cheap, search-grounded, and exposes
-citations in a parseable annotation format. The other three are stubbed in
-mock mode with the protocol in place — they slot in one at a time as keys
-become available. See `Engine protocol` below.
+**No API key?** Run with `--no-ai` for a crawl-only audit that still produces a full HTML report with health scores, schema analysis, and fix recommendations.
 
-## Engine protocol
+---
 
-Every engine implements the same interface (see `src/visibility.py`):
+## Configuration
 
-```python
-class Engine(Protocol):
-    name: str                         # e.g. "perplexity" or "perplexity (mock)"
-    def query(self, topic: str) -> EngineResult: ...
-    def is_real(self) -> bool: ...
+### Environment Variables
+
+All keys are **optional**. The tool runs fully in mock mode without them.
+
+```env
+# .env
+OPENROUTER_API_KEY=sk-or-v1-your-key-here    # Required for real AI engine queries
+PASSES_PER_QUERY=3                            # Passes per (engine, topic) pair (default: 3)
+PERPLEXITY_MODEL=perplexity/sonar-pro         # Override the Perplexity model
+ENGINE_RATE_LIMIT_SECS=2                      # Seconds between API calls (default: 2)
 ```
 
-`EngineResult` carries:
-- `text`: the raw model response
-- `citations`: list of cited source URLs (already extracted by the engine
-  client, not regex-scraped from text)
-- `latency_ms`, `model`: metadata for the run log
+### CLI Options
 
-Mock engines return deterministic fake citations so the whole pipeline
-works without any API key. The mock's `name` field reflects the slot it
-filled (e.g. `"chatgpt (mock)"`) so nothing in the report is mistaken for
-a real result.
+```
+python audit.py --help
+```
 
-## Crawl signals
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--domain` | `-d` | *(required)* | Domain to audit (e.g. `yoursite.com`). Scheme and path are stripped automatically. |
+| `--max-pages` | — | `10` | Maximum pages to crawl. Keep ≤10 for sub-30s audits. |
+| `--no-ai` | — | `false` | Skip AI engine citation checks. Crawl + analyzer + report only. |
+| `--passes` | — | `3` (from env) | Number of query passes per (engine, topic) pair. |
+| `--output` | `-o` | `output` | Directory for the generated HTML report. |
 
-- **answer_capsules** — count of H2/H3 headings followed by a direct
-  `<p>` answer within 200 characters (the "answer-first content"
-  pattern AI engines like to cite).
-- **stat_density** — data points (numbers, percentages, currency)
-  per 100 words. Higher = more quotable.
-- **authorship_pages** — pages with visible author bylines, author
-  schema, or `author` meta tags. Trust signal.
-- **schema_pages** — pages with JSON-LD or microdata schema markup.
-- **health_score** — composite 0–100 score from the above + access
-  hygiene (robots.txt, AI bot directives, thin pages).
-- **thin_pages** — pages under 300 words.
-- **missing_anchor_text** — internal links with empty or generic
-  anchor text ("click here", "read more").
-- **has_ai_txt / has_llms_txt / robots_blocks_ai** — accessibility
-  signals for AI crawlers.
+### Examples
 
-## Citation matrix
+```bash
+# Fast mock-mode audit (no API key)
+python audit.py --domain example.com --no-ai --max-pages 5
 
-A `topics × platforms` grid. For each cell:
-- `covered`: true if the target domain appears in that platform's
-  cited sources for that topic
-- `cited_sources`: list of competitor domains the engine cited
+# Real multi-engine audit with custom output location
+python audit.py --domain yoursite.com --max-pages 10 --output ./reports
 
-Plus a ranked list of competitor domains across all cells.
+# Quick audit with fewer pages
+python audit.py --domain yoursite.com --max-pages 3 --passes 1
+```
 
-## Fix recommendations
+---
 
-The analyzer generates 5–7 prioritized fixes from the crawl + citation
-data using a heuristic baseline. Examples:
+## Engines
 
-- If `answer_capsules == 0` → HIGH: "Add answer-first sections to key pages"
-- If `thin_pages > 0` → HIGH: "Pages with thin or non-extractable content"
-- If `missing_anchor_text > 0` → MEDIUM: "Pages with internal links missing
-  anchor text"
-- If `ai_coverage_pct == 0` → HIGH: Strategic read about building
-  topical authority
+Four AI engines are queried through OpenRouter (a unified API gateway). Each
+engine receives the same buyer-intent topic queries and returns citations.
 
+| Engine | Model | Real / Mock | Citation Source |
+|--------|-------|-------------|-----------------|
+| **Perplexity** | `perplexity/sonar` | Real (with API key) | Structured annotations |
+| **ChatGPT** | `openai/gpt-4o-mini-search-preview` | Real (with API key) | Regex from text |
+| **Claude** | `anthropic/claude-sonnet-4` | Real (with API key) | Regex from text |
+| **Gemini** | `google/gemini-2.5-flash` | Real (with API key) | Regex from text |
 
-Each fix has a `priority` (HIGH / MEDIUM / LOW), a `tag`
-(WORTH CITING / FOUNDATION / RECOMMENDED), a one-line `first_step`,
-and an `agent_fixable` flag.
+Without an OpenRouter API key, all engines run in **mock mode** with
+deterministic fake citations — the full pipeline works for development and
+demo purposes.
 
-## v1 limits (read before promising clients anything)
+---
 
-- **Citation check uses substring matching** for `domain in cited_source`.
-  It will miss misspellings, paraphrases, and brand variants. Smarter
-  detection (fuzzy match, embeddings, brand-alias list) is a phase 2
-  problem.
-- **Gemini API with Google Search grounding is NOT the same as showing
-  up in Google AI Overviews.** AI Overviews is the box in Google Search
-  results and has no public API. The Gemini API is the closest
-  programmatic proxy, but ranking and source selection can differ.
-  Don't let your clients conflate the two.
-- **Buyer topic generation is heuristic** when no LLM is available —
-  keyword extraction + service/category patterns. Good enough for
-  v1; richer when an LLM is wired in.
-- **Crawl is capped at 10 pages by default** to keep audit runtime
-  under ~30 seconds. Large sites need a sitemap-aware extension.
-- **No caching** — every audit re-crawls and re-queries. Add a SQLite
-  cache layer for client re-runs (planned for v2).
-- **Mock engines return plausible but invented citations.** Always
-  check the `name` field for `(mock)` suffix before reporting results
-  to a client.
+## Output
 
-## Project layout
+Each audit generates two artifacts in the output directory:
+
+### HTML Report (`output/<domain>-audit-<timestamp>.html`)
+
+A self-contained, dark-themed HTML report with 7 sections:
+
+| # | Section | Contents |
+|---|---------|----------|
+| 1 | **Header** | Brand name, slogan, domain URL, generation timestamp |
+| 2 | **Verdict** | AI Presence %, Best Brand, Best Model, Citation Count, Best Topic |
+| 3 | **Brand Recommendation Matrix** | 5 topics × 4 engines grid with cited/partial/not-cited status |
+| 4 | **Top Recommended Brands** | Top 3 most-cited competitor brands |
+| 5 | **Competitive Landscape** | Per-topic breakdown: result, mentions, citations, position, top competitor |
+| 6 | **AI Indexability Audit** | Health score hero + 15 signal cards + crawl issues | 
+| 7 | **Topics to Optimize** | Covered topics + zero-presence topics with dropdown toggle |
+
+### Scoring Methodology
+
+The **AI Presence Score** (0–100%) is computed per (topic × engine) cell from
+extracted brand mentions and positions, then aggregated across all 20 cells
+(5 topics × 4 engines). Full formula and worked examples at →
+[docs/scoring_system.md](docs/scoring_system.md).
+
+---
+
+## Crawl Signals
+
+The crawler extracts 15+ AI-readiness signals from the target domain:
+
+- **answer_capsules** — H2/H3 headings followed by direct `<p>` answers (citation magnets)
+- **stat_density** — Data points (numbers, percentages, currency) per 100 words
+- **authorship_pages** — Pages with visible author bylines or author schema
+- **schema_pages** — Pages with JSON-LD or microdata schema markup
+- **has_llms.txt** — Presence of `/llms.txt` (emerging AI crawler standard)
+- **robots_blocks_ai** — Whether `robots.txt` blocks tracked AI bots (27 bots monitored)
+- **agent_readability_score** — 0–100 composite: landmarks, alt text, form labels, heading hierarchy
+- **health_score** — Overall AI indexability score (0–100)
+- **thin_pages** — Pages under 300 words
+- **broken_links** — Empty or broken `href` attributes
+- **response_time** — Average server response time in ms
+- **redirect_hops** — Maximum redirect chain length
+- **about_page / contact_page** — Entity-definition pages detected
+
+---
+
+## Testing
+
+```bash
+# Activate venv first
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+# Run all tests (158 tests)
+python -m pytest tests/ -v
+
+# Run specific test suites
+python -m pytest tests/test_scoring.py -v       # 47 tests — brand extraction + scoring
+python -m pytest tests/test_collector.py -v     # 17 tests — collector pipeline
+python -m pytest tests/test_engines.py -v       # Engine client tests
+python -m pytest tests/test_template.py -v      # 26 tests — template validation
+python -m pytest tests/test_branding.py -v      # 27 tests — brand tokens + helpers
+python -m pytest tests/test_topicgen.py -v      # 19 tests — topic generation
+
+# Validate scoring formula (9 tests, 0.01 tolerance)
+python tests/validate_scoring.py
+
+# Integration test (requires API key — makes 20 real API calls)
+python -m pytest tests/test_integration_end_to_end.py -v
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ValueError: needs OPENROUTER_API_KEY` | No API key configured | Set `OPENROUTER_API_KEY` in `.env` or run with `--no-ai` |
+| `Could not resolve host` | Domain doesn't exist or DNS failure | Verify the domain is correct and publicly accessible |
+| `robots.txt disallows the audit user-agent` | Site blocks our crawler | The audit continues but flags this. Consider whitelisting the AEO-Audit-Tool UA. |
+| `latin-1 codec can't encode character` | Windows encoding issue with OpenRouter | Fixed in v2.0 — `r.encoding = "utf-8"` is forced before JSON parsing |
+| `All engines show (mock)` | No API key provided | Set `OPENROUTER_API_KEY` in `.env` — mock mode is the default fallback |
+| Report has zero AI presence | Domain has no AI engine citations | Expected for new sites. Use the fix recommendations in the report. |
+| Empty report or no topics generated | LLM topic generation failed | Tool falls back to heuristic keyword extraction — check console output for warnings |
+| `ImportError: No module named 'src'` | Running tests from wrong directory | Run from the project root (`aeo-audit-tool/`) with `python -m pytest tests/` |
+
+---
+
+## Project Layout
 
 ```
 aeo-audit-tool/
-├── audit.py                  # CLI entry point
-├── requirements.txt
-├── .env.example
+├── audit.py                     # Click CLI entry point
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Environment variable template (safe to commit)
+├── README.md                    # This file
+├── docs/
+│   ├── scoring_system.md        # Full scoring methodology + adjustment guide
+│   └── security-audit-2026-07-12.md  # v2.0 security review
 ├── src/
-│   ├── crawler.py            # Domain crawl + signal extraction
-│   ├── visibility.py         # Engine protocol + 4 clients + citation matrix
-│   ├── analyzer.py           # Strategic analysis + fix generation
-│   ├── reporter.py           # HTML report generation
+│   ├── crawler.py               # Domain crawl + 15 signal extraction (~1050 lines)
+│   ├── topicgen.py              # LLM-powered unbranded BOTF query generation
+│   ├── engines.py               # 4 real OpenRouter engine clients
+│   ├── visibility.py            # Engine protocol + citation matrix (v1 pattern)
+│   ├── collector.py             # Multi-engine × multi-topic runner + execute_all()
+│   ├── scoring.py               # Brand extraction + AI Presence Score + aggregate_results()
+│   ├── analyzer.py              # Strategic analysis + fix generation
+│   ├── reporter.py              # Jinja2 HTML report renderer
+│   ├── branding.py              # Smart Marketer brand tokens + CSS/HTML helpers
 │   └── templates/
-│       └── report.html       # Jinja2 dark-themed report template
-├── output/                   # Generated reports land here
+│       └── report.html          # Template v2: 7 sections, dark theme, vanilla CSS
+├── output/                      # Generated reports (gitignored except .gitkeep)
 └── tests/
+    ├── conftest.py              # Pytest config
+    ├── test_scoring.py          # Brand extraction + aggregate (47 tests)
+    ├── test_collector.py        # Collector pipeline (17 tests)
+    ├── test_engines.py          # Engine clients (22 assertions)
+    ├── test_template.py         # Template validation (26 tests)
+    ├── test_branding.py         # Brand tokens + helpers (27 tests)
+    ├── test_topicgen.py         # Topic generation (19 tests)
+    ├── test_integration_end_to_end.py  # Full pipeline (requires API key)
+    ├── validate_scoring.py      # Scoring formula validation (9 tests)
+    └── verify_prototype.py      # Ad-hoc end-to-end smoke test
 ```
 
-## Development
+---
 
-```bash
-source .venv/bin/activate
-python audit.py --domain example.com --no-ai --max-pages 3   # smoke test
-python tests/verify_prototype.py                             # ad-hoc end-to-end verification
-```
+## Roadmap
 
-## Future
+### v2.1 — Q3 2026
+- [ ] Domain format regex validation in `_normalize_domain()`
+- [ ] SQLite cache layer for repeat audits (skip re-crawls, re-queries)
+- [ ] Fuzzy brand matching (embeddings-based, beyond substring)
+- [ ] `llms.txt` content parsing (not just presence check)
 
-- Web wrapper (Flask) for browser-based lead capture form
-- Background job queue for production deployment
-- Cache layer for repeat audits
-- Smarter brand-cited detection (fuzzy match, embeddings, brand aliases)
-- LLM-enhanced strategic read + LLM-enhanced topic generation (heuristic
-  currently produces noun-phrase bigrams from headings; an LLM pass
-  would turn them into proper buyer-intent questions like "best
-  delegation system for founders")
-- Wire real Claude, ChatGPT, and Gemini engines (one at a time, with
-  regression tests per the aeo-tracking skill methodology)
+### v2.2 — Q4 2026
+- [ ] Web wrapper (Flask) for browser-based lead capture form
+- [ ] Sitemap-aware crawl extension (beyond 10-page BFS)
+- [ ] Background job queue for production deployment
+- [ ] PDF report export
+
+### v3.0 — 2027
+- [ ] Direct platform API integration (OpenAI, Anthropic, Google) — bypass OpenRouter
+- [ ] Competitive benchmarking dashboards (compare domains side-by-side)
+- [ ] Scheduled recurring audits with trend tracking
+- [ ] Multi-language support (topic generation in 10+ languages)
+
+---
+
+## Security
+
+A comprehensive security audit was performed for the v2.0 release. See
+[docs/security-audit-2026-07-12.md](docs/security-audit-2026-07-12.md) for the
+full report.
+
+**Overall rating: B+** — 4 of 5 checks pass (hardcoded secrets, env vars, error
+handling, output sanitization). Input validation is functional with low-severity
+hardening opportunities.
+
+Key security properties:
+- ✅ No hardcoded secrets — all API keys via `os.environ.get()`
+- ✅ `.env` is gitignored; `.env.example` ships empty
+- ✅ Jinja2 HTML autoescaping enabled — no `|safe` bypasses
+- ✅ Graceful error handling for all network failures
+- ✅ Rate limiting (2s between calls) prevents accidental API abuse
+
+---
+
+## Support
+
+- **GitHub Issues:** [github.com/jlvisualdg/ai-visibility-audit-tool/issues](https://github.com/jlvisualdg/ai-visibility-audit-tool/issues)
+- **Documentation:** Start with [docs/scoring_system.md](docs/scoring_system.md) for scoring methodology
+- **Contributing:** Open a PR against `main` — run full test suite before submitting
+
+---
+
+## License
+
+MIT © 2026 Julian Lopez

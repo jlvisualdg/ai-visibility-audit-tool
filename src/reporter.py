@@ -3,6 +3,12 @@ HTML report generator.
 
 Wraps the Jinja2 template with the AuditReport and writes a timestamped
 HTML file to the output directory.
+
+v2.0: Now accepts additional v2.0 pipeline variables (ai_presence_pct,
+best_brand, best_model, citation_count, best_topic, top_3_brands,
+engine_data, competitive_data, topics_to_optimize, global_priorities,
+crawl_signals) alongside the existing AuditReport for backward
+compatibility with the report.html template.
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -24,11 +31,54 @@ def _brand_name(domain: str) -> str:
     return " ".join(p.capitalize() for p in parts)
 
 
-def generate_report(report: AuditReport, output_dir: str = "output", no_ai: bool = False) -> str:
-    """
-    Render the dark-themed HTML report and write it to `output_dir`.
+def generate_report(
+    report: AuditReport,
+    output_dir: str = "output",
+    no_ai: bool = False,
+    # ── v2.0 pipeline variables ──
+    ai_presence_pct: Optional[float] = None,
+    best_brand: Optional[str] = None,
+    best_model: Optional[str] = None,
+    citation_count: Optional[int] = None,
+    best_topic: Optional[str] = None,
+    top_3_brands: Optional[list[dict]] = None,
+    engine_data: Optional[list[dict]] = None,
+    competitive_data: Optional[list[dict]] = None,
+    topics_to_optimize: Optional[list[str]] = None,
+    global_priorities: Optional[list[str]] = None,
+    crawl_signals: Any = None,
+    # ── branding overrides ──
+    brand_name: Optional[str] = None,
+    brand_slogan: Optional[str] = None,
+    website_url: Optional[str] = None,
+    logo_svg: Optional[str] = None,
+    report_date: Optional[str] = None,
+) -> str:
+    """Render the dark-themed HTML report and write it to `output_dir`.
 
-    Returns the absolute path of the generated file.
+    Args:
+        report: The AuditReport dataclass instance.
+        output_dir: Where to write the HTML file.
+        no_ai: Whether AI engines were skipped.
+        ai_presence_pct: v2.0 — overall AI presence percentage (0-100).
+        best_brand: v2.0 — top performing non-target brand.
+        best_model: v2.0 — engine with highest AI presence.
+        citation_count: v2.0 — total target domain citations.
+        best_topic: v2.0 — topic with highest AI presence.
+        top_3_brands: v2.0 — top 3 non-target brands [{name, count}, ...].
+        engine_data: v2.0 — per-engine breakdown.
+        competitive_data: v2.0 — per-topic competitive breakdown.
+        topics_to_optimize: v2.0 — queries with zero target presence.
+        global_priorities: v2.0 — 3 strategic priority items.
+        crawl_signals: v2.0 — CrawlResult (alternative access path).
+        brand_name: Override for brand display name.
+        brand_slogan: Override for tagline.
+        website_url: Override for website URL.
+        logo_svg: Override for logo SVG string.
+        report_date: Override for report date.
+
+    Returns:
+        Absolute path of the generated HTML file.
     """
     template_dir = Path(__file__).parent / "templates"
     env = Environment(
@@ -39,13 +89,31 @@ def generate_report(report: AuditReport, output_dir: str = "output", no_ai: bool
     )
     template = env.get_template("report.html")
 
+    # Compute defaults
+    generated_at = report_date or datetime.now().strftime("%Y-%m-%d %H:%M")
+
     html = template.render(
         report=report,
-        generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        generated_at=generated_at,
         no_ai=no_ai,
-        brand_name=_brand_name(report.domain),
-        brand_slogan="AI Engine Optimization Audit",
-        website_url=f"https://{report.domain}",
+        # ── branding ──
+        brand_name=brand_name or _brand_name(report.domain),
+        brand_slogan=brand_slogan or "AI Engine Optimization Audit",
+        website_url=website_url or f"https://{report.domain}",
+        # ── v2.0 verdict metrics ──
+        ai_presence_pct=ai_presence_pct,
+        best_brand=best_brand,
+        best_model=best_model,
+        citation_count=citation_count,
+        best_topic=best_topic,
+        # ── v2.0 derived data ──
+        top_3_brands=top_3_brands or [],
+        engine_data=engine_data or [],
+        competitive_data=competitive_data or [],
+        topics_to_optimize=topics_to_optimize or [],
+        global_priorities=global_priorities or [],
+        crawl_signals=crawl_signals,
+        logo_svg=logo_svg,
     )
 
     out_dir = Path(output_dir)
