@@ -36,9 +36,7 @@
      report.fixes[]             : FixRecommendation
        .title, .priority, .tag, .first_step, .agent_fixable
      report.buyer_topics[]      : str   — buyer-intent topics
-     report.page_blueprints{}   : dict  — content format recommendations
-
-   DERIVED AGGREGATES (computed inside template via Jinja2):
+     DERIVED AGGREGATES (computed inside template via Jinja2):
      best_performing_brand      : str   — brand with most citations (from all_competitors)
      best_model_presence        : str   — engine with highest coverage for target
      overall_citation_count     : int   — total cited_sources entries across results
@@ -112,8 +110,8 @@
     --text-link:    var(--blue-500);
 
     /* ---- Surfaces ---- */
-    --surface-page:   var(--neutral-0);
-    --surface-subtle: var(--neutral-50);
+    --surface-page:   var(--neutral-50);     /* #f7f9fb */
+    --surface-subtle: var(--neutral-100);
     --surface-card:   #ffffff;
     --surface-hover:  var(--neutral-50);
 
@@ -131,19 +129,23 @@
     --space-6: 32px;
     --space-7: 48px;
     --space-8: 64px;
+    --space-9: 96px;
 
-    /* ---- Radii (6 / 10 / 16 / 24) ---- */
+    /* ---- Radii (6 / 10 / 16 / 24 + pill 999) ---- */
     --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 16px;
     --radius-xl: 24px;
+    --radius-pill: 999px;
 
-    /* ---- Shadows — soft cool-blue, never harsh ---- */
+    /* ---- Shadows — soft cool-blue, 3 brand levels ---- */
     --shadow-xs:    0 1px 2px rgba(20, 49, 79, 0.06);
     --shadow-sm:    0 2px 6px rgba(20, 49, 79, 0.08);
     --shadow-md:    0 8px 24px rgba(20, 49, 79, 0.10);
     --shadow-lg:    0 18px 48px rgba(20, 49, 79, 0.14);
-    --shadow-brand: 0 12px 28px rgba(47, 149, 208, 0.22);
+    --shadow-brand-sm: 0 4px 12px rgba(47, 149, 208, 0.16);
+    --shadow-brand-md: 0 12px 28px rgba(47, 149, 208, 0.22);
+    --shadow-brand-lg: 0 20px 48px rgba(47, 149, 208, 0.30);
 
     /* ---- Typography ---- */
     --font-display: 'Poppins', 'Montserrat', system-ui, sans-serif;
@@ -201,7 +203,7 @@ body {
     font-weight: 800;
     color: var(--text-on-brand);
     flex-shrink: 0;
-    box-shadow: var(--shadow-brand);
+    box-shadow: var(--shadow-brand-md);
 }
 
 .header-brand-info { display: flex; flex-direction: column; }
@@ -365,32 +367,8 @@ body {
 
 .strategic-summary {
     color: var(--text-body);
-    margin-bottom: 18px;
+    margin-bottom: 0;
     font-size: 15px;
-    line-height: 1.6;
-}
-
-.strategic-play {
-    background: #ffffff;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    padding: 18px 20px;
-    border-left: 3px solid var(--success-500);
-}
-
-.strategic-play-label {
-    font-family: var(--font-display);
-    color: var(--success-500);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 6px;
-    font-weight: 600;
-}
-
-.strategic-play-text {
-    font-size: 14px;
-    color: var(--text-body);
     line-height: 1.6;
 }
 
@@ -578,7 +556,7 @@ body {
     font-weight: 700;
     color: var(--text-on-brand);
     flex-shrink: 0;
-    box-shadow: var(--shadow-brand);
+    box-shadow: var(--shadow-brand-md);
 }
 
 .top-brand-info { flex: 1; min-width: 0; }
@@ -760,6 +738,8 @@ body {
     border-radius: var(--radius-md);
     overflow: hidden;
     box-shadow: var(--shadow-xs);
+    list-style: none;
+    counter-reset: issue-counter;
 }
 
 .issue {
@@ -768,6 +748,19 @@ body {
     padding: 14px 18px;
     border-bottom: 1px solid var(--border-subtle);
     gap: 12px;
+    counter-increment: issue-counter;
+}
+
+.issue::before {
+    content: counter(issue-counter) ".";
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    min-width: 24px;
+    text-align: right;
+    padding-top: 1px;
 }
 
 .issue:last-child { border-bottom: none; }
@@ -908,7 +901,7 @@ body {
     font-size: 14px;
     transition: opacity var(--ease-standard) 220ms, transform var(--ease-standard) 140ms, box-shadow var(--ease-standard) 220ms;
     display: inline-block;
-    box-shadow: var(--shadow-brand);
+    box-shadow: var(--shadow-brand-md);
 }
 
 .cta-button:hover {
@@ -1093,10 +1086,6 @@ body {
     <div class="strategic-label">The Strategic Read</div>
     <h2 class="strategic-title">{{ report.strategic_read.title }}</h2>
     <p class="strategic-summary">{{ report.strategic_read.summary }}</p>
-    <div class="strategic-play">
-        <div class="strategic-play-label">The Play</div>
-        <p class="strategic-play-text">{{ report.strategic_read.the_play }}</p>
-    </div>
 </div>
 
 {# ====================================================================
@@ -1400,77 +1389,63 @@ body {
     {% if report.crawl_signals.issues %}
     <div class="issues-scope">
         <h3 class="issues-heading">Indexability Issues ({{ report.crawl_signals.issues|length }})</h3>
-        <div class="issues-list">
+        <ol class="issues-list">
             {% for issue in report.crawl_signals.issues %}
-            <div class="issue">
+            <li class="issue">
                 <span class="issue-severity severity-{{ issue.severity }}">{{ issue.severity }}</span>
                 <span class="issue-text">{{ issue.detail }}</span>
-            </div>
+            </li>
             {% endfor %}
-        </div>
+        </ol>
     </div>
     {% endif %}
 </section>
 
 {# ====================================================================
-   SECTION 7 — TOPICS TO OPTIMIZE (3 visible + 3 dropdown)
+   SECTION 7 — TOPICS TO OPTIMIZE (zero-presence only:
+    3 visible chips + rest hidden behind dropdown)
    ==================================================================== #}
 {% if report.buyer_topics %}
+{% set zero_topics = [] %}
+{% for topic in report.buyer_topics %}
+    {% set topic_results = report.citation_matrix.results|selectattr('topic', 'equalto', topic)|list %}
+    {% set topic_covered = topic_results|selectattr('covered')|list|length %}
+    {% if topic_covered == 0 and topic_results|length > 0 %}
+        {% set _ = zero_topics.append(topic) %}
+    {% endif %}
+{% endfor %}
+
+{% if zero_topics|length > 0 %}
 <section class="section topics-section">
     <div class="section-header">
         <div class="section-header-icon">🎯</div>
         <div class="section-header-content">
             <h2 class="section-title">Topics to Optimize</h2>
-            <p class="section-subtitle">Buyer topics your site should own in AI search results</p>
+            <p class="section-subtitle">Buyer topics with zero AI search presence — prioritize these first</p>
         </div>
     </div>
 
-    {# Compute zero-presence topics #}
-    {% set zero_topics = [] %}
-    {% set visible_topics = [] %}
-    {% for topic in report.buyer_topics %}
-        {% set topic_results = report.citation_matrix.results|selectattr('topic', 'equalto', topic)|list %}
-        {% set topic_covered = topic_results|selectattr('covered')|list|length %}
-        {% if topic_covered == 0 and topic_results|length > 0 %}
-            {% set _ = zero_topics.append(topic) %}
-        {% else %}
-            {% set _ = visible_topics.append(topic) %}
-        {% endif %}
-    {% endfor %}
-
-    {# Show all visible topics #}
+    {% set show_count = [3, zero_topics|length]|min %}
     <div class="topics-list">
-        {% for topic in visible_topics[:3] %}
-            <span class="topic-chip">{{ topic }}</span>
-        {% endfor %}
-        {% for topic in visible_topics[3:] %}
-            <span class="topic-chip">{{ topic }}</span>
+        {% for topic in zero_topics[:show_count] %}
+            <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
         {% endfor %}
     </div>
 
-    {# Show zero-presence topics behind dropdown (3 visible, rest hidden) #}
-    {% if zero_topics|length > 0 %}
-        {% set show_count = [3, zero_topics|length]|min %}
-        <div class="topics-list">
-            {% for topic in zero_topics[:show_count] %}
-                <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
-            {% endfor %}
-        </div>
+    {% if zero_topics|length > show_count %}
+    <button class="dropdown-toggle-btn" id="zeroTopicsToggle" onclick="toggleZeroTopics()">
+        <span>Show {{ zero_topics|length - show_count }} more</span>
+        <span class="arrow">▼</span>
+    </button>
 
-        {% if zero_topics|length > show_count %}
-        <button class="dropdown-toggle-btn" id="zeroTopicsToggle" onclick="toggleZeroTopics()">
-            <span>{{ zero_topics|length - show_count }} more topics with zero AI presence</span>
-            <span class="arrow">▼</span>
-        </button>
-
-        <div class="zero-presence-topics" id="zeroTopicsDropdown">
-            {% for topic in zero_topics[show_count:] %}
-                <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
-            {% endfor %}
-        </div>
-        {% endif %}
+    <div class="zero-presence-topics" id="zeroTopicsDropdown">
+        {% for topic in zero_topics[show_count:] %}
+            <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
+        {% endfor %}
+    </div>
     {% endif %}
 </section>
+{% endif %}
 {% endif %}
 
 {# ====================================================================

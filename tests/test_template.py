@@ -196,13 +196,11 @@ class TestTemplateStructure:
         assert "header-date" in self.html, "Report date missing"
 
     def test_verdict_section_present(self):
-        """Section 2: Verdict with 5 metric cards."""
+        """Section 2: Verdict with 3-takeaway format (Target Insights, Top Brand Metrics, Audit Conclusions)."""
         assert "verdict" in self.html.lower(), "Verdict section missing"
-        assert "AI Presence" in self.html, "AI Presence metric missing"
-        assert "Best Performing Brand" in self.html, "Best Performing Brand metric missing"
-        assert "Best Model Presence" in self.html, "Best Model Presence metric missing"
-        assert "Overall Citation Count" in self.html, "Overall Citation Count metric missing"
-        assert "Best Performing Topic" in self.html, "Best Performing Topic metric missing"
+        assert "Target Insights" in self.html, "Target Insights takeaway missing"
+        assert "Top Brand Metrics" in self.html, "Top Brand Metrics takeaway missing"
+        assert "Audit Conclusions" in self.html, "Audit Conclusions takeaway missing"
 
     def test_matrix_section_present(self):
         """Section 3: Brand Recommendation Matrix (5×4 table)."""
@@ -249,18 +247,18 @@ class TestTemplateStructuralIntegrity:
     def setup(self):
         self.html = _render(_sample_report())
 
-    def test_dark_theme_css_variables(self):
-        """Verify dark theme background (#0A0A0A) and gradient accents are defined."""
-        assert "--bg-primary: #0A0A0A" in self.html or "--bg-primary:#0A0A0A" in self.html, \
-            "Background color #0A0A0A not found in CSS"
-        assert "#0066FF" in self.html, "Primary gradient color #0066FF missing"
-        assert "#4F46E5" in self.html, "Secondary gradient color #4F46E5 missing"
+    def test_light_theme_css_variables(self):
+        """Verify light theme surface (#f7f9fb), blue-500 primary, blue-900 text-strong."""
+        assert "#f7f9fb" in self.html, "Surface background #f7f9fb not found in CSS"
+        assert "#2f95d0" in self.html, "Primary color #2f95d0 missing"
+        assert "#14314f" in self.html, "Text-strong color #14314f missing"
         assert "--gradient-brand" in self.html, "Brand gradient variable missing"
+        assert "--brand-primary" in self.html, "Brand primary variable missing"
 
     def test_font_system_sans_serif(self):
-        """Verify Inter or system sans-serif font stack."""
-        assert "Inter" in self.html, "Inter font not referenced"
-        assert "sans-serif" in self.html.lower(), "sans-serif fallback missing"
+        """Verify Poppins (headings) and Mulish (body) font stack."""
+        assert "Poppins" in self.html, "Poppins font not referenced"
+        assert "Mulish" in self.html, "Mulish font not referenced"
 
     def test_dropdown_js_present(self):
         """Verify minimal JS for dropdown toggle only."""
@@ -370,9 +368,9 @@ class TestContentValidation:
             "Buyer topics not rendered"
 
     def test_strategic_read_rendered(self):
-        """Verify the strategic read section renders."""
+        """Verify the strategic read section renders (no The Play — recommendations removed)."""
         assert "The Strategic Read" in self.html
-        assert "The Play" in self.html
+        assert "The Play" not in self.html, "The Play should have been removed"
 
     def test_fixes_rendered(self):
         """Verify template can contain fix recommendations (optional section)."""
