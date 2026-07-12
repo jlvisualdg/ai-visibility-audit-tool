@@ -86,6 +86,10 @@ AI_ISM_PHRASES: list[str] = [
     "needless to say",
     "as mentioned earlier",
     "as noted above",
+    "if you mean",
+    "on average",
+    "most cases",
+    "in some cases",
 ]
 
 
