@@ -611,6 +611,17 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         crawl_signals=crawl,
     )
 
+    # ── Cost summary ──
+    engine_cost = sum(r.get("cost_usd", 0.0) for r in results)
+    topicgen_cost = 0.0
+    if not skip_ai:
+        try:
+            from src.topicgen import get_topicgen_cost
+            topicgen_cost = get_topicgen_cost()
+        except Exception:
+            pass
+    total_cost = engine_cost + topicgen_cost
+
     console.print()
     from src.aeo_score import score_label
     console.print(f"[green]✓[/] Audit complete: [bold]{domain}[/]")
@@ -621,6 +632,8 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
     console.print(f"[green]✓[/] Best Brand:     [bold]{aggregate['best_brand']}[/]")
     console.print(f"[green]✓[/] Best Model:     [bold]{aggregate['best_model']}[/]")
     console.print(f"[green]✓[/] Best Topic:     [bold]{aggregate['best_topic']}[/]")
+    if not skip_ai:
+        console.print(f"[green]✓[/] API Cost:       [bold]${total_cost:.4f}[/]  (engines ${engine_cost:.4f} + topics ${topicgen_cost:.4f})")
     console.print(f"[green]✓[/] Report:         [link=file://{output_path}]{output_path}[/]")
     console.print()
     console.print(f"[dim]Open in browser: open {output_path}[/]")

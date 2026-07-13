@@ -28,6 +28,28 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 TOPICGEN_MODEL = os.environ.get("TOPICGEN_MODEL", "openai/gpt-4o-mini").strip()
 TOPICGEN_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# gpt-4o-mini pricing: $0.15/M input, $0.60/M output
+_TOPICGEN_IN_PRICE = 0.15
+_TOPICGEN_OUT_PRICE = 0.60
+_topicgen_cost_usd: float = 0.0
+
+
+def get_topicgen_cost() -> float:
+    return _topicgen_cost_usd
+
+
+def reset_topicgen_cost() -> None:
+    global _topicgen_cost_usd
+    _topicgen_cost_usd = 0.0
+
+
+def _accumulate_cost(response_json: dict) -> None:
+    global _topicgen_cost_usd
+    usage = response_json.get("usage") or {}
+    in_tok = int(usage.get("prompt_tokens", 0))
+    out_tok = int(usage.get("completion_tokens", 0))
+    _topicgen_cost_usd += (in_tok * _TOPICGEN_IN_PRICE + out_tok * _TOPICGEN_OUT_PRICE) / 1_000_000
+
 # ── Public API ──
 
 
@@ -141,7 +163,9 @@ def _call_llm_for_topics(api_key: str, prompt: str, timeout: int) -> Optional[li
         if not r.ok:
             return None
 
-        raw = r.json()["choices"][0]["message"]["content"].strip()
+        response_json = r.json()
+        _accumulate_cost(response_json)
+        raw = response_json["choices"][0]["message"]["content"].strip()
         match = re.search(r"\[.*?\]", raw, re.DOTALL)
         if match:
             topics = json.loads(match.group())
@@ -294,8 +318,10 @@ def _inject_keyword_variations(
         )
         if not kw_r.ok:
             return
+        kw_json = kw_r.json()
+        _accumulate_cost(kw_json)
         main_kw = (
-            kw_r.json()["choices"][0]["message"]["content"]
+            kw_json["choices"][0]["message"]["content"]
             .strip()
             .strip('"')
             .strip("'")
@@ -334,7 +360,9 @@ def _inject_keyword_variations(
         if not var_r.ok:
             return
 
-        var_raw = var_r.json()["choices"][0]["message"]["content"].strip()
+        var_json = var_r.json()
+        _accumulate_cost(var_json)
+        var_raw = var_json["choices"][0]["message"]["content"].strip()
         var_match = re.search(r"\[.*?\]", var_raw, re.DOTALL)
         if var_match:
             variations = json.loads(var_match.group())

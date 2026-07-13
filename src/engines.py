@@ -62,6 +62,20 @@ DOMAIN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# OpenRouter per-model pricing: (input $/M tokens, output $/M tokens)
+MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "perplexity/sonar": (1.0, 1.0),
+    "openai/gpt-4o-mini-search-preview": (0.15, 0.60),
+    "openai/gpt-4o-mini": (0.15, 0.60),
+    "anthropic/claude-sonnet-4": (3.0, 15.0),
+    "google/gemini-2.5-flash": (0.075, 0.30),
+}
+
+
+def _compute_cost(model: str, in_tok: int, out_tok: int) -> float:
+    in_price, out_price = MODEL_PRICING.get(model, (1.0, 1.0))
+    return (in_tok * in_price + out_tok * out_price) / 1_000_000
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -192,6 +206,7 @@ class _BaseEngine:
                 "engine": self._engine_name,
                 "latency_ms": _elapsed_ms(started),
                 "error": f"HTTP error: {e}",
+                "cost_usd": 0.0,
             }
         except ValueError as e:
             return {
@@ -200,11 +215,18 @@ class _BaseEngine:
                 "engine": self._engine_name,
                 "latency_ms": _elapsed_ms(started),
                 "error": f"JSON decode error: {e}",
+                "cost_usd": 0.0,
             }
 
         # --- Parse response ---
         text = ""
         citations: list[str] = []
+
+        # Extract token usage for cost tracking
+        usage = data.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens", 0))
+        completion_tokens = int(usage.get("completion_tokens", 0))
+        cost_usd = _compute_cost(self._model, prompt_tokens, completion_tokens)
 
         try:
             choice = data["choices"][0]
@@ -226,6 +248,7 @@ class _BaseEngine:
                 "engine": self._engine_name,
                 "latency_ms": _elapsed_ms(started),
                 "error": f"Unexpected response shape: {e}",
+                "cost_usd": cost_usd,
             }
 
         # Fallback: regex the text for domain mentions if no annotations
@@ -238,6 +261,9 @@ class _BaseEngine:
             "engine": self._engine_name,
             "latency_ms": _elapsed_ms(started),
             "error": None,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "cost_usd": cost_usd,
         }
 
 

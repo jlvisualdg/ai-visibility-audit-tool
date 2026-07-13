@@ -83,6 +83,7 @@ class GeminiDataForSEOEngine:
                 "engine": self._engine_name,
                 "latency_ms": int((time.time() - started) * 1000),
                 "error": f"HTTP error: {e}",
+                "cost_usd": 0.0,
             }
         except ValueError as e:
             return {
@@ -91,6 +92,7 @@ class GeminiDataForSEOEngine:
                 "engine": self._engine_name,
                 "latency_ms": int((time.time() - started) * 1000),
                 "error": f"JSON decode error: {e}",
+                "cost_usd": 0.0,
             }
 
         # Parse DataForSEO response structure
@@ -106,9 +108,12 @@ class GeminiDataForSEOEngine:
                     "engine": self._engine_name,
                     "latency_ms": int((time.time() - started) * 1000),
                     "error": "No tasks in response",
+                    "cost_usd": 0.0,
                 }
 
             task = tasks[0]
+            task_cost = float(task.get("cost") or 0.0)
+
             if task.get("status_code") != 20000:
                 return {
                     "text": "",
@@ -116,6 +121,7 @@ class GeminiDataForSEOEngine:
                     "engine": self._engine_name,
                     "latency_ms": int((time.time() - started) * 1000),
                     "error": f"DataForSEO error: {task.get('status_message', 'unknown')}",
+                    "cost_usd": task_cost,
                 }
 
             results = task.get("result", [])
@@ -126,6 +132,7 @@ class GeminiDataForSEOEngine:
                     "engine": self._engine_name,
                     "latency_ms": int((time.time() - started) * 1000),
                     "error": "No results in task",
+                    "cost_usd": task_cost,
                 }
 
             result = results[0]
@@ -168,6 +175,7 @@ class GeminiDataForSEOEngine:
                 "engine": self._engine_name,
                 "latency_ms": int((time.time() - started) * 1000),
                 "error": f"Parse error: {e}",
+                "cost_usd": 0.0,
             }
 
         text = "\n\n".join(text_parts)
@@ -178,4 +186,5 @@ class GeminiDataForSEOEngine:
             "engine": self._engine_name,
             "latency_ms": int((time.time() - started) * 1000),
             "error": None,
+            "cost_usd": task_cost,
         }
