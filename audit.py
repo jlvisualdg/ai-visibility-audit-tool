@@ -319,6 +319,7 @@ def _derive_v2_variables(results: list[dict], aggregate: dict, domain: str) -> d
     engine_data_list = sorted(engine_data.values(), key=lambda x: x["engine"])
 
     # --- competitive_data: per-query breakdown ---
+    # Count both brand recommendations (mentions in text) and citations (URL sources)
     competitive_data: list[dict] = []
     for topic in dict.fromkeys(r["topic"] for r in results):
         topic_results = [r for r in results if r["topic"] == topic]
@@ -327,7 +328,12 @@ def _derive_v2_variables(results: list[dict], aggregate: dict, domain: str) -> d
             sum(1 for c in (r.get("citations", []) or []) if _domain_contains_citation(c, domain))
             for r in topic_results
         )
-        engines_covered = sum(1 for r in topic_results if r.get("target_mention_count", 0) > 0)
+        # A topic is "covered" if target brand is mentioned in text OR cited as source
+        engines_covered = sum(
+            1 for r in topic_results
+            if r.get("target_mention_count", 0) > 0
+            or any(_domain_contains_citation(c, domain) for c in (r.get("citations", []) or []))
+        )
         competitive_data.append({
             "topic": topic,
             "target_mentions": mentions,
@@ -336,9 +342,11 @@ def _derive_v2_variables(results: list[dict], aggregate: dict, domain: str) -> d
             "total_engines": len(topic_results),
         })
 
-    # --- topics_to_optimize: queries where target brand has 0 presence ---
+    # --- topics_to_optimize: queries where target has 0 presence
+    # (neither brand mentioned in text nor domain cited as source) ---
     topics_to_optimize = [
-        cd["topic"] for cd in competitive_data if cd["target_mentions"] == 0
+        cd["topic"] for cd in competitive_data
+        if cd["target_mentions"] == 0 and cd["target_citations"] == 0
     ]
 
     # --- global_priorities: 3 items based on performance ---
@@ -451,9 +459,12 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         else:
             try:
                 from src.collector import execute_all
-                results = execute_all(topics, domain)
+                # Extract brand name from crawl for better target matching
+                from src.reporter import _brand_name
+                crawl_brand = _brand_name(domain, getattr(crawl, 'title', ''), getattr(crawl, 'meta_description', ''))
+                results = execute_all(topics, domain, target_brand_name=crawl_brand)
             except Exception as e:
-                console.print(f"  [yellow]⚠ AI check failed ({e}), falling back to mock data[/]")
+                console.print(f"  [yellow]AI check failed ({e}), falling back to mock data[/]")
                 results = _generate_mock_results(domain, topics)
 
         progress.update(task, advance=1)
@@ -483,6 +494,14 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         # ── 7. Derive v2.0 variables ──
         v2 = _derive_v2_variables(results, aggregate, domain)
         progress.update(task, advance=1)
+
+    # Term Ownership: count of queries where target has zero presence
+    # (neither mentioned in text nor cited as source) across all engines
+    zero_presence_count = sum(
+        1 for cd in v2.get("competitive_data", [])
+        if cd.get("target_mentions", 0) == 0 and cd.get("target_citations", 0) == 0
+    )
+    report.fixable_gaps = zero_presence_count
 
     # ── Render ──
     output_path = generate_report(

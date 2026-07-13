@@ -34,15 +34,20 @@ def execute_all(
     *,
     api_key: Optional[str] = None,
     sleep_between: float = 2.0,
+    target_brand_name: str = "",
 ) -> list[dict]:
-    """Run all four engines against every topic and extract brand mentions.
+    """Run all engines against every topic and extract brand mentions.
 
-    Loop order: for engine in engines: for topic in topics (5 topics × 4 engines = 20 results).
+    Args:
+        target_brand_name: Brand name extracted from the scraped page title/meta.
+            If provided, this is added to the target tokens for matching.
+
+    Loop order: for engine in engines: for topic in topics (4 topics x 3 engines = 12 results).
 
     Each result dict shape:
         {
             topic: str,
-            engine: str,           # display name: 'Perplexity', 'ChatGPT', 'Claude', 'Gemini'
+            engine: str,           # display name: 'Perplexity', 'ChatGPT', 'Gemini'
             text: str,
             citations: list[str],
             latency_ms: int,
@@ -52,7 +57,7 @@ def execute_all(
             target_mention_count: int,    # len(positions)
         }
 
-    Engine failures are handled gracefully — the result dict will have
+    Engine failures are handled gracefully: the result dict will have
     error populated and empty lists for citations/brand_mentions/positions.
     """
     # Only engines that return real citations/sources.
@@ -135,7 +140,7 @@ def execute_all(
                 try:
                     # Brand recommendations: from text only
                     brand_mentions, positions = extract_brand_mentions(
-                        text, target_domain
+                        text, target_domain, target_brand_name
                     )
                 except Exception:
                     brand_mentions = []

@@ -24,26 +24,43 @@ from src.analyzer import AuditReport
 
 
 def _brand_name(domain: str, crawl_title: str = "", crawl_meta: str = "") -> str:
-    """Extract on-page brand name from title/meta. Falls back to domain humanization."""
-    # Try extracting brand from title tag first (e.g. "Winona — Menopause Relief" → "Winona")
+    """Strict brand name extraction from scrape data.
+
+    Priority:
+    1. Page title — split on separators (|, -, —, ::), take first part
+    2. Meta description — first 1-2 words if title fails
+    3. Domain — humanized fallback only
+
+    The brand name is the foundational datapoint for the entire visibility
+    audit. If this is wrong, brand mention matching against AI responses
+    will fail.
+    """
     import re
+
+    # 1. Try page title first
     if crawl_title:
-        # Common patterns: "Brand | Slogan", "Brand - Slogan", "Brand :: Slogan"
-        parts = re.split(r'\s*[|\-–—::]\s*', crawl_title.strip())
+        title = crawl_title.strip()
+        # Split on common title separators
+        parts = re.split(r'\s*[|]\s*|\s*[-–—]\s*|\s*::\s*', title)
         if parts and parts[0].strip():
             candidate = parts[0].strip()
-            # Reject if it's just generic words
-            generic = {"home", "homepage", "welcome", "index", "untitled"}
-            if candidate.lower() not in generic and len(candidate) <= 30:
+            # Reject generic words
+            generic = {"home", "homepage", "welcome", "index", "untitled", "document"}
+            if candidate.lower() not in generic and 2 <= len(candidate) <= 40:
                 return candidate
-    # Try meta description first word
+
+    # 2. Try meta description
     if crawl_meta:
-        first_words = crawl_meta.strip().split()[:2]
-        if first_words:
-            candidate = " ".join(first_words)
-            if len(candidate) <= 30 and not candidate.lower().startswith(("the ", "a ", "an ")):
+        meta = crawl_meta.strip()
+        # Take first 1-2 words that look like a brand
+        words = meta.split()[:2]
+        if words:
+            candidate = " ".join(words)
+            if (2 <= len(candidate) <= 40
+                    and not candidate.lower().startswith(("the ", "a ", "an ", "welcome"))):
                 return candidate
-    # Fallback: humanize domain
+
+    # 3. Fallback: humanize domain
     bare = domain.split(".")[0]
     parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare).split()
     return " ".join(p.capitalize() for p in parts)

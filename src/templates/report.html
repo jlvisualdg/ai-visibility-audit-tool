@@ -16,8 +16,7 @@
      report.domain              : str      — audited domain
      report.ai_coverage_pct     : float    — 0–100
      report.fixable_gaps        : int      — count of fix recommendations
-     report.strategic_read      : StrategicRead
-       .title, .summary, .the_play
+     report.fixable_gaps       : int — count of queries with zero AI presence
      report.citation_matrix     : CitationMatrix
        .results[]               : TopicResult — raw topic×engine cells
          .topic, .engine, .covered, .coverage_rate
@@ -1338,16 +1337,14 @@ body {
                 </tr>
             </thead>
             <tbody>
-                {% for topic in (report.buyer_topics[:5] if report.buyer_topics|length > 5 else report.buyer_topics) %}
+                {% for topic in report.buyer_topics %}
                 <tr>
                     <td>{{ topic }}</td>
                     {% for engine in report.citation_matrix.engines %}
                         {% set cell = report.citation_matrix.result_for(topic, engine) %}
                         {% if cell %}
-                            {% if cell.coverage_rate >= 0.99 %}
+                            {% if cell.best_brand_mentions > 0 or cell.best_url_citations > 0 %}
                                 <td class="matrix-cell-covered">✓ Mentioned</td>
-                            {% elif cell.coverage_rate > 0 %}
-                                <td class="matrix-cell-partial">~ {{ '%.0f' % (cell.coverage_rate * 100) }}%</td>
                             {% else %}
                                 <td class="matrix-cell-missed">✗ Not mentioned</td>
                             {% endif %}
@@ -1393,20 +1390,15 @@ body {
 {% endif %}
 
 {# ====================================================================
-   SECTION 5 — COMPETITIVE LANDSCAPE (6 columns)
+   SECTION 5 - COMPETITIVE LANDSCAPE (all engines, not just Perplexity)
    ==================================================================== #}
 {% if report.citation_matrix.results %}
-{% set px_results = report.citation_matrix.results|selectattr('engine', 'equalto', 'perplexity')|list %}
-{% if px_results|length == 0 %}
-    {% set px_results = report.citation_matrix.results|selectattr('engine', 'equalto', 'perplexity (mock)')|list %}
-{% endif %}
-{% if px_results %}
 <section class="section">
     <div class="section-header">
         <div class="section-header-icon">🔍</div>
         <div class="section-header-content">
             <h2 class="section-title">Competitive Landscape</h2>
-            <p class="section-subtitle">For each query, who owns the answer space — and where does {{ report.domain }} rank?</p>
+            <p class="section-subtitle">For each query, who owns the answer space across all engines</p>
         </div>
     </div>
 
@@ -1414,6 +1406,7 @@ body {
         <table class="landscape-table">
             <thead>
                 <tr>
+                    <th>Engine</th>
                     <th>Query</th>
                     <th>Top Brand</th>
                     <th>Brand Recommendations</th>
@@ -1422,12 +1415,13 @@ body {
                 </tr>
             </thead>
             <tbody>
-            {% for result in px_results %}
+            {% for result in report.citation_matrix.results %}
                 <tr>
+                    <td>{{ result.engine|replace(' (mock)', '')|capitalize }}</td>
                     <td><strong>{{ result.topic }}</strong></td>
                     <td><span class="hit-badge">{{ result.top_competitor or '—' }}</span></td>
-                    <td>{{ result.best_brand_mentions }}×</td>
-                    <td>{{ result.best_url_citations }}×</td>
+                    <td>{{ result.best_brand_mentions }}x</td>
+                    <td>{{ result.best_url_citations }}x</td>
                     <td>{% if result.best_first_section %}#{{ result.best_first_section }}{% else %}—{% endif %}</td>
                 </tr>
             {% endfor %}
@@ -1435,7 +1429,6 @@ body {
         </table>
     </div>
 </section>
-{% endif %}
 {% endif %}
 
 {# ====================================================================

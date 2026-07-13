@@ -163,6 +163,7 @@ CONNECTOR_BRAND = re.compile(
 def extract_brand_mentions(
     response_text: str,
     target_domain: str,
+    target_brand_name: str = "",
 ) -> Tuple[list[str], list[int]]:
     """Extract brand names and track target brand positions.
 
@@ -172,24 +173,15 @@ def extract_brand_mentions(
     of first appearance plus the 1-indexed occurrence positions of the
     target brand.
 
-    Target matching: if `target_domain` is "paretotalent.com", we look for
-    "paretotalent" or "pareto talent" (case-insensitive) anywhere in the
-    response text. Each occurrence's position among all brand mentions
-    (before deduplication) is recorded.
-
     Args:
         response_text: The AI engine response text to scan.
-        target_domain: Domain being audited (e.g. "paretotalent.com").
+        target_domain: Domain being audited (e.g. "bywinona.com").
+        target_brand_name: Brand name extracted from the scraped page title.
+            If provided, this is added to the target tokens for matching
+            (e.g. "Winona" for bywinona.com).
 
     Returns:
         (unique_brands, target_positions) tuple.
-
-    Examples:
-        >>> extract_brand_mentions("Acme Corp and Global Tech lead the market.", "globaltech.com")
-        (['Acme Corp', 'Global Tech'], [2])
-
-        >>> extract_brand_mentions("Pareto Talent was cited. Acme Corp also. Pareto Talent again.", "paretotalent.com")
-        (['Pareto Talent', 'Acme Corp'], [1, 3])
     """
     if not response_text or not response_text.strip():
         return ([], [])
@@ -232,6 +224,10 @@ def extract_brand_mentions(
     # ----- Step 4: find target brand positions -----
     # Extract target search tokens from the domain
     target_tokens = _extract_target_tokens(target_domain)
+    # Add the on-page brand name as a target token if provided
+    # (e.g. "Winona" from title for bywinona.com)
+    if target_brand_name and target_brand_name.lower() not in target_tokens:
+        target_tokens.append(target_brand_name.lower())
     target_positions = _find_target_positions(filtered, target_tokens)
 
     return (unique_brands, target_positions)

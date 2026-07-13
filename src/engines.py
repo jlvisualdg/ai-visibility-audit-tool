@@ -47,12 +47,10 @@ load_dotenv()
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-# Default prompt template matching visibility.py's style
-DEFAULT_PROMPT_TEMPLATE = (
-    "I'm researching {topic}. "
-    "What are the top vendors, platforms, or services a buyer would consider? "
-    "List them with brief pros/cons. Include specific company names and domains."
-)
+# The query IS the prompt — don't wrap it. The topicgen already generates
+# complete buyer-intent queries. Wrapping them in a research question changes
+# what the engine responds to and degrades brand recommendation quality.
+DEFAULT_PROMPT_TEMPLATE = "{topic}"
 
 # Rate limiting — shared across all engines so concurrent callers wait in line.
 _RATE_LIMIT_SECS = float(os.environ.get("ENGINE_RATE_LIMIT_SECS", "2"))
