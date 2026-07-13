@@ -503,22 +503,24 @@ body {
    SECTION 4 — TOP RECOMMENDED BRANDS (top 3)
    ================================================================== */
 .top-brands {
-    margin-top: 24px;
     display: flex;
-    gap: 16px;
+    align-items: flex-end;
+    gap: 20px;
     flex-wrap: wrap;
 }
 
 .top-brand-item {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 14px;
+    text-align: center;
+    gap: 10px;
     background: var(--surface-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    padding: 18px 24px;
+    padding: 20px 24px;
     flex: 1;
-    min-width: 220px;
+    min-width: 200px;
     box-shadow: var(--shadow-xs);
     transition: box-shadow var(--ease-standard) 220ms, border-color var(--ease-standard) 220ms;
 }
@@ -584,7 +586,7 @@ body {
     box-shadow: var(--shadow-brand-md);
 }
 
-.top-brand-info { flex: 1; min-width: 0; }
+.top-brand-info { text-align: center; }
 
 .top-brand-name {
     font-family: var(--font-display);
@@ -677,6 +679,57 @@ body {
 .indexability-section .signal-status-ok { color: var(--success-500) !important; }
 .indexability-section .signal-status-warn { color: var(--warning-500) !important; }
 .indexability-section .signal-status-bad { color: var(--danger-500) !important; }
+
+/* Dark issues list */
+.indexability-section .issues-list {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.indexability-section .issue {
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.indexability-section .issue::before {
+    color: rgba(255, 255, 255, 0.4) !important;
+}
+
+.indexability-section .issue-text {
+    color: rgba(255, 255, 255, 0.85) !important;
+}
+
+.indexability-section .severity-critical { background: rgba(209, 73, 91, 0.2); color: var(--danger-500) !important; }
+.indexability-section .severity-high { background: rgba(232, 161, 58, 0.15); color: var(--warning-500) !important; }
+.indexability-section .severity-medium { background: rgba(232, 161, 58, 0.15); color: var(--warning-500) !important; }
+.indexability-section .severity-low { background: rgba(47, 149, 208, 0.15); color: var(--brand-accent) !important; }
+
+/* Health score hero — readable */
+.indexability-section .health-score-hero {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.indexability-section .health-score-hero .signal-value {
+    font-size: 48px !important;
+    color: var(--brand-accent) !important;
+}
+
+/* Signal subgroups */
+.signal-subgroup {
+    grid-column: 1 / -1;
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-top: 16px;
+    margin-bottom: 4px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.signal-subgroup:first-child { margin-top: 0; }
 
 .landscape-wrapper {
     overflow-x: auto;
@@ -1200,7 +1253,7 @@ body {
         <div class="diagnostic-metrics">
             <div class="metric-card">
                 <div class="metric-value">{{ '%.0f' % report.ai_coverage_pct }}%</div>
-                <div class="metric-label">AI Coverage</div>
+                <div class="metric-label">AI Presence</div>
             </div>
             <div class="metric-card">
                 <div class="metric-value">{{ report.crawl_signals.health_score }}/100</div>
@@ -1208,7 +1261,7 @@ body {
             </div>
             <div class="metric-card">
                 <div class="metric-value">{{ report.fixable_gaps }}</div>
-                <div class="metric-label">Fixable Gaps</div>
+                <div class="metric-label">Term Ownership</div>
             </div>
         </div>
     </div>
@@ -1426,6 +1479,9 @@ body {
             <div class="signal-label">AI Indexability Score / 100</div>
         </div>
 
+        {# Subgroup: Content Structure #}
+        <div class="signal-subgroup">Content Structure</div>
+
         {# Signal: Answer Capsules #}
         <div class="signal-card">
             <div class="signal-icon">📝</div>
@@ -1448,6 +1504,9 @@ body {
             </div>
             <div class="signal-label">Pages with Authorship</div>
         </div>
+
+        {# Subgroup: Schema & Entity #}
+        <div class="signal-subgroup">Schema & Entity</div>
 
         {# Signal: Schema Markup #}
         <div class="signal-card">
@@ -1492,6 +1551,9 @@ body {
             <div class="signal-label">Schema Types Found</div>
         </div>
 
+        {# Subgroup: Technical Health #}
+        <div class="signal-subgroup">Technical Health</div>
+
         {# Signal: Response Time #}
         <div class="signal-card">
             <div class="signal-icon">⚡</div>
@@ -1500,6 +1562,9 @@ body {
             </div>
             <div class="signal-label">Avg Response Time</div>
         </div>
+
+        {# Subgroup: Agent Readability #}
+        <div class="signal-subgroup">Agent Readability</div>
 
         {# Signal: Agent Readability #}
         <div class="signal-card">
@@ -1568,7 +1633,7 @@ body {
     <div class="issues-scope">
         <h3 class="issues-heading">Indexability Issues ({{ report.crawl_signals.issues|length }})</h3>
         <ol class="issues-list">
-            {% for issue in report.crawl_signals.issues %}
+            {% for issue in report.crawl_signals.issues|sort(attribute='severity', reverse=True) %}
             <li class="issue">
                 <span class="issue-severity severity-{{ issue.severity }}">{{ issue.severity }}</span>
                 <span class="issue-text">{{ issue.detail }}</span>

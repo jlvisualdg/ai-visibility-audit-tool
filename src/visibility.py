@@ -392,14 +392,18 @@ def build_engines(
     else:
         engines.append(MockEngine("perplexity"))
 
-    # ChatGPT — mock for v1
-    engines.append(MockEngine("chatgpt"))
+    # ChatGPT — real via OpenRouter search-preview
+    try:
+        from src.engines import ChatGPTEngine
+        engines.append(ChatGPTEngine(api_key=perplexity_key, target_domain=target_domain))
+    except Exception:
+        engines.append(MockEngine("chatgpt"))
 
-    # Claude — mock for v1
-    engines.append(MockEngine("claude"))
+    # Claude — removed: doesn't return citations via OpenRouter
+    # engines.append(MockEngine("claude"))
 
-    # Gemini — mock for v1
-    engines.append(MockEngine("gemini"))
+    # Gemini — removed: doesn't return citations via OpenRouter
+    # engines.append(MockEngine("gemini"))
 
     return engines
 

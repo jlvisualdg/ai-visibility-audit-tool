@@ -584,21 +584,35 @@ def _jsonld_has_author(obj) -> bool:
 
 
 def _has_schema_with_types(soup: BeautifulSoup) -> tuple[bool, list[str]]:
-    """Check for JSON-LD or microdata schema. Returns (has_schema, [@type values])."""
+    """Check for JSON-LD or microdata schema. Returns (has_schema, [@type values]).
+    Handles @graph nesting where JSON-LD wraps types in a graph array."""
     types: list[str] = []
+
+    def _extract_types(obj):
+        """Recursively extract @type values from nested JSON-LD."""
+        if isinstance(obj, dict):
+            t = obj.get("@type")
+            if isinstance(t, str):
+                types.append(t)
+            elif isinstance(t, list):
+                types.extend(t)
+            # Check @graph (common pattern: {"@graph": [{@type: "WebSite"}, ...]})
+            if "@graph" in obj:
+                _extract_types(obj["@graph"])
+            # Recurse into nested dicts
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    _extract_types(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _extract_types(item)
+
     for script in soup.find_all("script", type="application/ld+json"):
         if not script.string or not script.string.strip():
             continue
         try:
             data = json.loads(script.string.strip())
-            items = data if isinstance(data, list) else [data]
-            for item in items:
-                if isinstance(item, dict):
-                    t = item.get("@type")
-                    if isinstance(t, str):
-                        types.append(t)
-                    elif isinstance(t, list):
-                        types.extend(t)
+            _extract_types(data)
         except (json.JSONDecodeError, AttributeError):
             pass
     for el in soup.find_all(attrs={"itemtype": True}):
@@ -985,6 +999,11 @@ def _check_robots_txt(domain: str, timeout: int = 10) -> dict:
 
     out["ai_bots_blocked"] = sum(1 for v in bot_decisions.values() if v)
     out["ai_bots_allowed"] = sum(1 for v in bot_decisions.values() if not v)
+
+    # If robots.txt exists but has no explicit AI bot directives at all,
+    # all bots are implicitly allowed (no blocks = all green).
+    if not bot_decisions and not out["blocks_ai"]:
+        out["ai_bots_allowed"] = len(AI_BOT_USER_AGENTS)
 
     return out
 
