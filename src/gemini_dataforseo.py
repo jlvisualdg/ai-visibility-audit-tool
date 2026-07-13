@@ -56,12 +56,12 @@ class GeminiDataForSEOEngine:
         # Build auth header
         auth_header = f"Basic {self._cred}"
 
-        # Build task payload
-        payload = {
+        # Build task payload — DataForSEO expects an array of tasks
+        payload = [{
             "keyword": topic,
             "location_name": "United States",
             "language_name": "English",
-        }
+        }]
 
         try:
             r = requests.post(
