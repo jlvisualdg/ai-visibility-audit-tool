@@ -273,38 +273,118 @@ body {
 
 /* AEO Score hero */
 .aeo-score-hero {
-    text-align: center;
-    margin-bottom: 24px;
-    padding: 20px;
+    margin-bottom: 28px;
+    padding: 28px 24px 24px;
     background: rgba(255, 255, 255, 0.06);
     border-radius: var(--radius-md);
     border: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+}
+
+.aeo-score-ring {
+    text-align: center;
 }
 
 .aeo-score-value {
     font-family: var(--font-display);
-    font-size: 72px;
+    font-size: 80px;
     font-weight: 800;
-    color: #ffffff;
     line-height: 1;
-    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
+}
+.aeo-score-value.score--strong   { color: #4ade80; }
+.aeo-score-value.score--emerging { color: #facc15; }
+.aeo-score-value.score--limited  { color: #fb923c; }
+.aeo-score-value.score--critical { color: #f87171; }
+
+.aeo-score-meta {
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
 }
 
 .aeo-score-label {
     font-family: var(--font-display);
     font-size: 13px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(255, 255, 255, 0.55);
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-top: 8px;
 }
 
-.aeo-score-breakdown {
+.aeo-score-tier {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.4);
-    margin-top: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border-radius: 20px;
 }
+.score--strong   .aeo-score-tier { background: rgba(74,222,128,0.2);  color: #4ade80; }
+.score--emerging .aeo-score-tier { background: rgba(250,204,21,0.2);  color: #facc15; }
+.score--limited  .aeo-score-tier { background: rgba(251,146,60,0.2);  color: #fb923c; }
+.score--critical .aeo-score-tier { background: rgba(248,113,113,0.2); color: #f87171; }
+
+/* Sub-score bars */
+.aeo-sub-scores {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sub-score-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.sub-score-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.sub-score-name {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: rgba(255,255,255,0.55);
+}
+
+.sub-score-value {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 700;
+    color: rgba(255,255,255,0.85);
+}
+
+.sub-score-weight {
+    font-size: 10px;
+    color: rgba(255,255,255,0.3);
+}
+
+.sub-score-track {
+    height: 6px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.sub-score-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.6s ease;
+}
+.sub-score-fill--visibility   { background: linear-gradient(90deg, #57aede, #2f95d0); }
+.sub-score-fill--citation     { background: linear-gradient(90deg, #818cf8, #6366f1); }
+.sub-score-fill--indexability { background: linear-gradient(90deg, #34d399, #10b981); }
 
 .diagnostic-summary p {
     font-size: 15px;
@@ -1231,16 +1311,43 @@ body {
 <section class="diagnostic">
     <div class="diagnostic-label">The Diagnostic</div>
 
-    {# AEO Score — aggregate rating 0/10 #}
-    {# Computed from AI Presence (coverage %) + Indexability health score #}
-    {% set aeo_raw = (report.ai_coverage_pct * 0.6) + (report.crawl_signals.health_score * 0.4) %}
-    {% set aeo_score = (aeo_raw / 10)|round(1) %}
+    {# AEO Score hero — composite score computed in Python (aeo_score.py) #}
     <div class="aeo-score-hero">
-        <div class="aeo-score-value">{{ aeo_score }}</div>
-        <div class="aeo-score-label">Overall AEO Score / 10</div>
-        <div class="aeo-score-breakdown">
-            AI Presence: {{ '%.0f' % report.ai_coverage_pct }}% &middot;
-            Indexability: {{ report.crawl_signals.health_score }}/100
+        <div class="aeo-score-ring">
+            <div class="aeo-score-value {{ aeo_color_class }}">{{ aeo_score }}<span style="font-size:32px;font-weight:400;color:rgba(255,255,255,0.35)">/100</span></div>
+            <div class="aeo-score-meta {{ aeo_color_class }}">
+                <span class="aeo-score-label">AEO Score</span>
+                <span class="aeo-score-tier">{{ aeo_label }}</span>
+            </div>
+        </div>
+        <div class="aeo-sub-scores">
+            <div class="sub-score-row">
+                <div class="sub-score-header">
+                    <span class="sub-score-name">Visibility <span class="sub-score-weight">45%</span></span>
+                    <span class="sub-score-value">{{ '%.0f'|format(visibility_score) }}</span>
+                </div>
+                <div class="sub-score-track">
+                    <div class="sub-score-fill sub-score-fill--visibility" style="width:{{ visibility_score|round|int }}%"></div>
+                </div>
+            </div>
+            <div class="sub-score-row">
+                <div class="sub-score-header">
+                    <span class="sub-score-name">Citations <span class="sub-score-weight">30%</span></span>
+                    <span class="sub-score-value">{{ '%.0f'|format(citation_score) }}</span>
+                </div>
+                <div class="sub-score-track">
+                    <div class="sub-score-fill sub-score-fill--citation" style="width:{{ citation_score|round|int }}%"></div>
+                </div>
+            </div>
+            <div class="sub-score-row">
+                <div class="sub-score-header">
+                    <span class="sub-score-name">Indexability <span class="sub-score-weight">25%</span></span>
+                    <span class="sub-score-value">{{ '%.0f'|format(indexability_score) }}</span>
+                </div>
+                <div class="sub-score-track">
+                    <div class="sub-score-fill sub-score-fill--indexability" style="width:{{ indexability_score|round|int }}%"></div>
+                </div>
+            </div>
         </div>
     </div>
 

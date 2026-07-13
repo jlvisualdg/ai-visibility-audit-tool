@@ -548,7 +548,14 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         # ── 4. Aggregate results (v2.0 scoring) ──
         progress.update(task, description="[cyan]Scoring visibility (v2.0)...")
         from src.scoring import aggregate_results
+        from src.aeo_score import compute_all as compute_aeo_scores
         aggregate = aggregate_results(results, domain)
+        scores = compute_aeo_scores(
+            results=results,
+            target_domain=domain,
+            ai_presence_pct=aggregate["ai_presence_pct"],
+            indexability_score=crawl.health_score,
+        )
 
         # ── 5. Build CitationMatrix for template compatibility ──
         matrix = _build_citation_matrix_from_results(results, domain, topics)
@@ -574,6 +581,11 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         report,
         output_dir=output,
         no_ai=skip_ai,
+        # composite AEO score
+        aeo_score=scores["aeo_score"],
+        visibility_score=scores["visibility_score"],
+        citation_score=scores["citation_score"],
+        indexability_score=scores["indexability_score"],
         # v2.0 variables
         ai_presence_pct=aggregate["ai_presence_pct"],
         best_brand=aggregate["best_brand"],
@@ -589,13 +601,15 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
     )
 
     console.print()
+    from src.aeo_score import score_label
     console.print(f"[green]✓[/] Audit complete: [bold]{domain}[/]")
-    console.print(f"[green]✓[/] AI Presence:    [bold]{aggregate['ai_presence_pct']:.0f}%[/]")
+    console.print(f"[green]✓[/] AEO Score:      [bold]{scores['aeo_score']}/100[/] ({score_label(scores['aeo_score'])})")
+    console.print(f"[green]✓[/]   Visibility:   [bold]{scores['visibility_score']:.0f}[/]  (45%)")
+    console.print(f"[green]✓[/]   Citations:    [bold]{scores['citation_score']:.0f}[/]  (30%)")
+    console.print(f"[green]✓[/]   Indexability: [bold]{scores['indexability_score']:.0f}[/]  (25%)")
     console.print(f"[green]✓[/] Best Brand:     [bold]{aggregate['best_brand']}[/]")
     console.print(f"[green]✓[/] Best Model:     [bold]{aggregate['best_model']}[/]")
-    console.print(f"[green]✓[/] Citations:      [bold]{aggregate['citation_count']}[/]")
     console.print(f"[green]✓[/] Best Topic:     [bold]{aggregate['best_topic']}[/]")
-    console.print(f"[green]✓[/] Health Score:   [bold]{report.crawl_signals.health_score}/100[/]")
     console.print(f"[green]✓[/] Report:         [link=file://{output_path}]{output_path}[/]")
     console.print()
     console.print(f"[dim]Open in browser: open {output_path}[/]")
