@@ -71,7 +71,7 @@ class GeminiDataForSEOEngine:
                     "Authorization": auth_header,
                     "Content-Type": "application/json",
                 },
-                timeout=120,
+                timeout=30,
             )
             r.raise_for_status()
             r.encoding = "utf-8"
