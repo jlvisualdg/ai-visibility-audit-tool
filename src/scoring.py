@@ -601,12 +601,8 @@ def aggregate_results(results: list[dict], target_domain: str) -> dict:
             best_topic = topic
 
     # ---- Best brand (excluding target) ----
-    # For each non-target brand, accumulate a presence-style score across all
-    # queries.  We treat each appearance of the brand in a result's
-    # brand_mentions list as a mention (mention_count=1) and use its 1-indexed
-    # position.  The score per appearance is:
-    #     (total_brands - position + 1) / total_brands * 100
-    # which is position_score without the mention multiplier.
+    # Brand recommendations: brand names explicitly written in AI answer text.
+    # Scored by position among all recommended brands.
     brand_cumulative: dict[str, float] = {}
     for r in results:
         brand_mentions = r.get("brand_mentions", []) or []
@@ -625,7 +621,9 @@ def aggregate_results(results: list[dict], target_domain: str) -> dict:
     else:
         best_brand = "None"
 
-    # ---- Citation count ----
+    # ---- Citation count (target domain cited as source) ----
+    # Citations: target/competitor domains returned as sources/annotations.
+    # This is independent from brand recommendations.
     citation_count = 0
     for r in results:
         citations = r.get("citations", []) or []

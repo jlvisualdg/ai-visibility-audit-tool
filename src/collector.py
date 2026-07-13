@@ -15,7 +15,7 @@ from src.engines import (
     ChatGPTEngine,
 )
 from src.gemini_dataforseo import GeminiDataForSEOEngine
-from src.scoring import extract_brand_mentions, brands_from_citations
+from src.scoring import extract_brand_mentions
 
 # ---------------------------------------------------------------------------
 # Engine name map — lowercase internal → display name
@@ -116,9 +116,14 @@ def execute_all(
                     "error": str(e),
                 }
 
-            # Extract brand mentions — per-platform approach:
-            # 1. Primary: brands from citation domains (URLs returned by engine)
-            # 2. Fallback: regex on response text for capitalized phrases
+            # ── Two independent metrics ──
+            # 1. BRAND RECOMMENDATIONS: brand names explicitly written in the
+            #    AI's answer text (what the user reads). Extracted via regex
+            #    on capitalized phrases, filtered for AI-isms.
+            # 2. CITATIONS: domains/URLs returned as sources/annotations by
+            #    the engine (technical source references). These are separate
+            #    from brand recommendations — a domain can be cited without
+            #    the brand name being written in the answer, and vice versa.
             text = raw.get("text", "") or ""
             citations = raw.get("citations", []) or []
             error = raw.get("error")
@@ -128,23 +133,10 @@ def execute_all(
                 positions: list[int] = []
             else:
                 try:
-                    # Primary: extract brands from actual cited domains
-                    citation_brands = brands_from_citations(citations)
-
-                    # Fallback: regex on text for any brands not in citations
-                    text_brands, text_positions = extract_brand_mentions(
+                    # Brand recommendations: from text only
+                    brand_mentions, positions = extract_brand_mentions(
                         text, target_domain
                     )
-
-                    # Merge: citation brands first (more reliable), then text brands
-                    seen_lower = {b.lower() for b in citation_brands}
-                    for b in text_brands:
-                        if b.lower() not in seen_lower:
-                            citation_brands.append(b)
-                            seen_lower.add(b.lower())
-
-                    brand_mentions = citation_brands
-                    positions = text_positions
                 except Exception:
                     brand_mentions = []
                     positions = []
