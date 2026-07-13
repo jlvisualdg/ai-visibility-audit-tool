@@ -9,7 +9,7 @@
    TOP-LEVEL VARIABLES:
      generated_at : str           — "2026-07-12 14:30"
      brand_name   : str           — e.g. "Smart Marketer" (from report.domain, humanized)
-     brand_slogan : str           — "AI Engine Optimization Audits"
+     brand_slogan : str           — "Answer Engine Optimization Audits"
      website_url  : str           — e.g. "https://smartmarketer.com"
 
    REPORT OBJECT (report.*):
@@ -698,10 +698,10 @@ body {
     color: rgba(255, 255, 255, 0.85) !important;
 }
 
-.indexability-section .severity-critical { background: rgba(209, 73, 91, 0.2); color: var(--danger-500) !important; }
-.indexability-section .severity-high { background: rgba(232, 161, 58, 0.15); color: var(--warning-500) !important; }
-.indexability-section .severity-medium { background: rgba(232, 161, 58, 0.15); color: var(--warning-500) !important; }
-.indexability-section .severity-low { background: rgba(47, 149, 208, 0.15); color: var(--brand-accent) !important; }
+.indexability-section .severity-critical { background: rgba(209, 73, 91, 0.25) !important; color: var(--danger-500) !important; border: 1px solid rgba(209, 73, 91, 0.3); }
+.indexability-section .severity-high { background: rgba(232, 161, 58, 0.2) !important; color: var(--warning-500) !important; border: 1px solid rgba(232, 161, 58, 0.3); }
+.indexability-section .severity-medium { background: rgba(232, 161, 58, 0.2) !important; color: var(--warning-500) !important; border: 1px solid rgba(232, 161, 58, 0.3); }
+.indexability-section .severity-low { background: rgba(47, 149, 208, 0.2) !important; color: rgba(120, 200, 255, 1) !important; border: 1px solid rgba(47, 149, 208, 0.3); }
 
 /* Health score hero — readable */
 .indexability-section .health-score-hero {
@@ -711,7 +711,12 @@ body {
 
 .indexability-section .health-score-hero .signal-value {
     font-size: 48px !important;
-    color: var(--brand-accent) !important;
+    color: #ffffff !important;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.indexability-section .health-score-hero .signal-label {
+    color: rgba(255, 255, 255, 0.7) !important;
 }
 
 /* Signal subgroups */
@@ -1010,6 +1015,33 @@ body {
 
 .zero-presence-topics.visible { display: flex; }
 
+.scraped-pages {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.scraped-pages-label {
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+}
+
+.scraped-pages-list {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    word-break: break-all;
+}
+
+.scraped-page-url {
+    color: var(--brand-primary);
+}
+
 /* ==================================================================
    SECTION 8 — FOOTER CTA
    ================================================================== */
@@ -1109,7 +1141,7 @@ body {
         <div class="header-logo">SM</div>
         <div class="header-brand-info">
             <div class="header-brand-name">{{ brand_name or report.domain.split('.')[0]|capitalize }}</div>
-            <div class="header-brand-slogan">{{ brand_slogan or 'AI Engine Optimization Audit' }}</div>
+            <div class="header-brand-slogan">{{ brand_slogan or 'Answer Engine Optimization Audit' }}</div>
         </div>
     </div>
     <div class="header-right">
@@ -1289,9 +1321,9 @@ body {
     <div class="engine-note">
         <strong>Engines analyzed:</strong> {{ report.citation_matrix.engines|map('replace', ' (mock)', '')|join(', ') }}
         <div class="legend-inline">
-            <span class="legend-green">●</span><span>Cited</span>
+            <span class="legend-green">●</span><span>Mentioned</span>
             <span class="legend-yellow">●</span><span>Partial</span>
-            <span class="legend-red">●</span><span>Not Cited</span>
+            <span class="legend-red">●</span><span>Not Mentioned</span>
         </div>
     </div>
 
@@ -1313,11 +1345,11 @@ body {
                         {% set cell = report.citation_matrix.result_for(topic, engine) %}
                         {% if cell %}
                             {% if cell.coverage_rate >= 0.99 %}
-                                <td class="matrix-cell-covered">✓ Cited</td>
+                                <td class="matrix-cell-covered">✓ Mentioned</td>
                             {% elif cell.coverage_rate > 0 %}
                                 <td class="matrix-cell-partial">~ {{ '%.0f' % (cell.coverage_rate * 100) }}%</td>
                             {% else %}
-                                <td class="matrix-cell-missed">✗ Not cited</td>
+                                <td class="matrix-cell-missed">✗ Not mentioned</td>
                             {% endif %}
                         {% else %}
                             <td class="matrix-cell-missed">—</td>
@@ -1383,28 +1415,20 @@ body {
             <thead>
                 <tr>
                     <th>Query</th>
-                    <th>Result</th>
-                    <th>Brand Mentions</th>
+                    <th>Top Brand</th>
+                    <th>Total Mentions</th>
                     <th>URL Citations</th>
-                    <th>Brand Position</th>
-                    <th>Top Competitor</th>
+                    <th>Avg Position</th>
                 </tr>
             </thead>
             <tbody>
             {% for result in px_results %}
                 <tr>
                     <td><strong>{{ result.topic }}</strong></td>
-                    <td>
-                        {% if result.covered %}
-                        <span class="hit-badge">HIT</span>
-                        {% else %}
-                        <span class="miss-badge">MISS</span>
-                        {% endif %}
-                    </td>
+                    <td><span class="hit-badge">{{ result.top_competitor or '—' }}</span></td>
                     <td>{{ result.best_brand_mentions }}×</td>
                     <td>{{ result.best_url_citations }}×</td>
                     <td>{% if result.best_first_section %}#{{ result.best_first_section }}{% else %}—{% endif %}</td>
-                    <td>{{ result.top_competitor or '—' }}</td>
                 </tr>
             {% endfor %}
             </tbody>
@@ -1467,7 +1491,7 @@ body {
     <div class="section-header">
         <div class="section-header-icon">🤖</div>
         <div class="section-header-content">
-            <h2 class="section-title">AI Indexability Audit</h2>
+            <h2 class="section-title">Agent Indexability Audit</h2>
             <p class="section-subtitle">Technical signals that determine how well AI engines can access and cite your content</p>
         </div>
     </div>
@@ -1476,7 +1500,7 @@ body {
         {# Health Score Hero #}
         <div class="health-score-hero">
             <div class="signal-value">{{ report.crawl_signals.health_score }}</div>
-            <div class="signal-label">AI Indexability Score / 100</div>
+            <div class="signal-label">Agent Indexability Score / 100</div>
         </div>
 
         {# Subgroup: Content Structure #}
@@ -1551,8 +1575,8 @@ body {
             <div class="signal-label">Schema Types Found</div>
         </div>
 
-        {# Subgroup: Technical Health #}
-        <div class="signal-subgroup">Technical Health</div>
+        {# Subgroup: Response Speed #}
+        <div class="signal-subgroup">Response Speed</div>
 
         {# Signal: Response Time #}
         <div class="signal-card">
@@ -1569,6 +1593,7 @@ body {
         {# Signal: Agent Readability #}
         <div class="signal-card">
             <div class="signal-icon">🔍</div>
+            <div class="signal-label">Semantic structure score — how well AI agents can parse page content</div>
             <div class="signal-value">{{ report.crawl_signals.avg_agent_readability }}</div>
             <div class="signal-label">Agent Readability Score</div>
         </div>
@@ -1576,6 +1601,7 @@ body {
         {# Signal: Landmarks #}
         <div class="signal-card">
             <div class="signal-icon">🏗️</div>
+            <div class="signal-label">HTML5 semantic elements (nav, main, header, footer) for agent navigation</div>
             <div class="signal-value {% if report.crawl_signals.pages_with_landmarks < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.pages_with_landmarks }}/{{ report.crawl_signals.total_pages }}
             </div>
@@ -1585,6 +1611,7 @@ body {
         {# Signal: Missing Alt #}
         <div class="signal-card">
             <div class="signal-icon">🖼️</div>
+            <div class="signal-label">Images without alt text — agents use alt for image context</div>
             <div class="signal-value {% if report.crawl_signals.total_images_missing_alt > 0 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.total_images_missing_alt }}
             </div>
@@ -1631,7 +1658,7 @@ body {
     {# Crawl Issues #}
     {% if report.crawl_signals.issues %}
     <div class="issues-scope">
-        <h3 class="issues-heading">Indexability Issues ({{ report.crawl_signals.issues|length }})</h3>
+        <h3 class="issues-heading">Prioritized Indexability Issues ({{ report.crawl_signals.issues|length }})</h3>
         <ol class="issues-list">
             {% for issue in report.crawl_signals.issues|sort(attribute='severity', reverse=True) %}
             <li class="issue">
@@ -1659,8 +1686,20 @@ body {
 </div>
 
 <footer class="footer">
-    <p><strong>Smart Marketer · AI Engine Optimization Audit</strong> — generated by aeo-audit-tool v2.0</p>
+    <p><strong>Smart Marketer · Answer Engine Optimization Audit</strong> — generated by aeo-audit-tool v2.0</p>
     <p>Citations were checked by querying AI engines and inspecting the cited source lists returned by each. Coverage figures reflect what the engines surfaced at the time of audit, not what could be true in a different prompt or pass. Substring matching is used for brand detection — paraphrased or misspelled citations may be missed.</p>
+
+    {# Scraped pages list #}
+    {% if report.crawl_signals.pages_analyzed %}
+    <div class="scraped-pages">
+        <div class="scraped-pages-label">Pages scraped for this audit ({{ report.crawl_signals.total_pages }}):</div>
+        <div class="scraped-pages-list">
+            {% for page in report.crawl_signals.pages_analyzed %}
+            <span class="scraped-page-url">{{ page.url }}</span>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
 </footer>
 
 </div>

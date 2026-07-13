@@ -44,20 +44,20 @@ console = Console()
 # shows realistic competitive differentiation across engines.
 _MOCK_ENGINE_BRANDS: dict[str, list[str]] = {
     "Perplexity": [
-        "Acme Talent", "Global Hire", "Elite Staffing", "NextGen Recruiting",
-        "Talent Bridge", "Precision Hire", "Workforce Pro", "Swift Staffing",
+        "Brand Alpha", "Brand Beta", "Brand Gamma", "Brand Delta",
+        "Brand Epsilon", "Brand Zeta", "Brand Eta", "Brand Theta",
     ],
     "ChatGPT": [
-        "Talent Bridge", "Remote Hire Co", "Elite Staffing", "Future Workforce",
-        "Acme Talent", "Digital Staffing", "Hire Genius", "Smart Recruit",
+        "Brand Epsilon", "Brand Iota", "Brand Gamma", "Brand Kappa",
+        "Brand Alpha", "Brand Lambda", "Brand Mu", "Brand Nu",
     ],
     "Claude": [
-        "Elite Staffing", "Precision Hire", "Global Hire", "Talent Bridge",
-        "NextGen Recruiting", "Staffing Solutions", "Recruit Pro", "Apex Talent",
+        "Brand Gamma", "Brand Zeta", "Brand Beta", "Brand Epsilon",
+        "Brand Delta", "Brand Xi", "Brand Omicron", "Brand Pi",
     ],
     "Gemini": [
-        "Global Hire", "Acme Talent", "Remote Hire Co", "Smart Recruit",
-        "Future Workforce", "Talent Bridge", "Digital Staffing", "Workforce Pro",
+        "Brand Beta", "Brand Alpha", "Brand Iota", "Brand Nu",
+        "Brand Kappa", "Brand Epsilon", "Brand Lambda", "Brand Zeta",
     ],
 }
 

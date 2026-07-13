@@ -347,7 +347,7 @@ def _default_mock_response(slot: str, topic: str) -> EngineResult:
     vendors = slot_vendors.get(slot, ["example-vendor.com"])
 
     text = (
-        f"Here are the top vendors and platforms for {topic}, based on "
+        f"Here are the top options for {topic}, based on "
         f"current market data:\n\n"
     )
     for i, v in enumerate(vendors, 1):

@@ -23,10 +23,28 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from src.analyzer import AuditReport
 
 
-def _brand_name(domain: str) -> str:
-    """Humanize a domain name for branding: 'paretotalent.com' -> 'Pareto Talent'."""
+def _brand_name(domain: str, crawl_title: str = "", crawl_meta: str = "") -> str:
+    """Extract on-page brand name from title/meta. Falls back to domain humanization."""
+    # Try extracting brand from title tag first (e.g. "Winona — Menopause Relief" → "Winona")
+    import re
+    if crawl_title:
+        # Common patterns: "Brand | Slogan", "Brand - Slogan", "Brand :: Slogan"
+        parts = re.split(r'\s*[|\-–—::]\s*', crawl_title.strip())
+        if parts and parts[0].strip():
+            candidate = parts[0].strip()
+            # Reject if it's just generic words
+            generic = {"home", "homepage", "welcome", "index", "untitled"}
+            if candidate.lower() not in generic and len(candidate) <= 30:
+                return candidate
+    # Try meta description first word
+    if crawl_meta:
+        first_words = crawl_meta.strip().split()[:2]
+        if first_words:
+            candidate = " ".join(first_words)
+            if len(candidate) <= 30 and not candidate.lower().startswith(("the ", "a ", "an ")):
+                return candidate
+    # Fallback: humanize domain
     bare = domain.split(".")[0]
-    # CamelCase split
     parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare).split()
     return " ".join(p.capitalize() for p in parts)
 
@@ -97,8 +115,8 @@ def generate_report(
         generated_at=generated_at,
         no_ai=no_ai,
         # ── branding ──
-        brand_name=brand_name or _brand_name(report.domain),
-        brand_slogan=brand_slogan or "AI Engine Optimization Audit",
+        brand_name=brand_name or _brand_name(report.domain, getattr(report.crawl_signals, 'title', ''), getattr(report.crawl_signals, 'meta_description', '')),
+        brand_slogan=brand_slogan or "Answer Engine Optimization Audit",
         website_url=website_url or f"https://{report.domain}",
         # ── v2.0 verdict metrics ──
         ai_presence_pct=ai_presence_pct,
