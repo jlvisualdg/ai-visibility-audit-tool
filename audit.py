@@ -213,21 +213,41 @@ def _build_citation_matrix_from_results(
                 top_competitor = b
                 break
 
-        # Count URL citations containing target domain
-        url_citation_count = sum(
+        # Count URL citations containing target domain (target's citations)
+        target_url_citations = sum(
             1 for c in citations if _domain_contains_citation(c, domain)
         )
+
+        # Total brand recommendations in this response (all brands, not just target)
+        total_brand_recommendations = len(brand_mentions)
+
+        # Total URL citations in this response (all sources, not just target)
+        total_url_citations = len(citations)
+
+        # Position of the top brand in the recommendation list
+        top_brand_position = None
+        if top_competitor and brand_mentions:
+            for i, b in enumerate(brand_mentions, 1):
+                if b.lower() == top_competitor.lower():
+                    top_brand_position = i
+                    break
+
+        # Target brand position (if mentioned)
+        target_position = positions[0] if positions else None
+
+        # Average position across multiple mentions (if brand appears in multiple queries)
+        avg_position = top_brand_position
 
         tr = TopicResult(
             topic=r["topic"],
             engine=engine_key,
             pass_count=1,
-            covered=target_mentioned,
+            covered=target_mentioned or target_url_citations > 0,
             cited_sources=citations,
             passes=[],
-            best_brand_mentions=r.get("target_mention_count", 0),
-            best_url_citations=url_citation_count,
-            best_first_section=positions[0] if positions else None,
+            best_brand_mentions=total_brand_recommendations,
+            best_url_citations=total_url_citations,
+            best_first_section=avg_position,
             top_competitor=top_competitor,
         )
         matrix.results.append(tr)

@@ -144,7 +144,7 @@ class CitationMatrix:
     def coverage_pct(self) -> float:
         if self.total_cells == 0:
             return 0.0
-        return round(100.0 * self.covered_cells / self.total_cells, 1)
+        return max(0.0, round(100.0 * self.covered_cells / self.total_cells, 1))
 
     def result_for(self, topic: str, engine: str) -> Optional[TopicResult]:
         for r in self.results:
