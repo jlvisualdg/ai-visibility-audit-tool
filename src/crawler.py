@@ -95,6 +95,35 @@ AI_BOT_USER_AGENTS = [
 ]
 
 
+# Targeted crawl — path candidates for each page type
+_ABOUT_PATHS = ["/about", "/about-us", "/company", "/our-story", "/team", "/who-we-are"]
+_CONTACT_PATHS = ["/contact", "/contact-us", "/get-in-touch", "/reach-us", "/support", "/help"]
+
+# URL path patterns that suggest a service/product page
+_SERVICE_PATH_RE = re.compile(
+    r"/(services?|solutions?|products?|offer(?:ing)?s?|platform|tools?|"
+    r"capabilities|work|what-we-do|how-it-works|packages?|plans?)",
+    re.IGNORECASE,
+)
+# Paths to exclude from service page candidates
+_NON_SERVICE_PATH_RE = re.compile(
+    r"/(about|contact|blog|news|press|media|careers?|jobs?|login|sign[- ]?(?:in|up)|"
+    r"register|privacy|terms|faq|help|support|legal|cookie)",
+    re.IGNORECASE,
+)
+
+# Social media domains for credibility checks
+_SOCIAL_DOMAINS = (
+    "facebook.com", "twitter.com", "x.com", "linkedin.com",
+    "instagram.com", "youtube.com", "tiktok.com", "threads.net",
+)
+
+# Phone number regex (loose — catches US formats + international +XX prefix)
+_PHONE_RE = re.compile(
+    r"(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"
+)
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -134,6 +163,14 @@ class PageSnapshot:
     form_inputs_total: int = 0
     heading_skip_levels: int = 0
     agent_readability_score: int = 0
+    # Page type tag set during targeted crawl
+    page_type: str = ""  # "homepage" | "about" | "contact" | "service" | "other"
+    # Credibility / trustworthiness signals
+    has_privacy_link: bool = False
+    has_terms_link: bool = False
+    has_nap_signals: bool = False   # phone number or physical address
+    has_trust_signals: bool = False  # testimonials, reviews, client logos
+    has_social_links: bool = False
 
 
 @dataclass
@@ -181,6 +218,19 @@ class CrawlResult:
     avg_agent_readability: int = 0
     pages_with_landmarks: int = 0
     total_images_missing_alt: int = 0
+    # Targeted page URLs (set during directed crawl)
+    homepage_url: str = ""
+    about_url: str = ""
+    contact_url: str = ""
+    service_url: str = ""
+    service_keyword: str = ""
+    # Credibility audit (derived from homepage snapshot)
+    has_ssl: bool = False
+    has_privacy_policy: bool = False
+    has_terms: bool = False
+    has_contact_info_on_homepage: bool = False
+    has_trust_signals_on_homepage: bool = False
+    has_social_links: bool = False
 
     @property
     def total_pages(self) -> int:
@@ -203,14 +253,21 @@ class CrawlResult:
 # ---------------------------------------------------------------------------
 
 
-def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15) -> CrawlResult:
+def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keyword: str = "") -> CrawlResult:
     """
     Crawl `domain` and extract AI-readiness signals.
 
-    Picks the first responsive URL from SEED_PATHS, then BFS-crawls internal
-    links up to `max_pages` pages. Polite delays (0.5s) between requests.
-    Stops on robots.txt disallow (for our user agent) and on consecutive
-    errors.
+    Phase 1 — targeted fetches (always attempted first):
+      homepage → about → contact → primary service page
+
+    Phase 2 — BFS over remaining page budget.
+
+    Polite 0.5s delays between requests. Stops on consecutive errors.
+
+    Args:
+        main_keyword: Optional hint (e.g. first BOTF topic) used to score
+                      which nav link is the primary service page. When omitted
+                      the crawler derives a keyword from the homepage H1/title.
     """
     domain = _normalize_domain(domain)
     result = CrawlResult(domain=domain)
@@ -227,47 +284,109 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15) -> CrawlRe
         result.errors.append(
             f"robots.txt disallows the audit user-agent from {domain}"
         )
-        # Still proceed — most sites allow our agent; but flag it
 
-    # 2. Find a responsive seed URL
+    # 2. Set up session
     session = requests.Session()
     session.headers.update(DEFAULT_HEADERS)
+    seen: set[str] = set()
 
-    seed_url = None
-    for path in SEED_PATHS:
-        candidate = f"https://{domain}{path}"
-        try:
-            r = session.get(candidate, timeout=timeout, allow_redirects=True)
-            if r.ok and "text/html" in r.headers.get("Content-Type", ""):
-                seed_url = r.url
-                break
-        except requests.RequestException:
-            continue
+    # ── Phase 1: Targeted fetches ──────────────────────────────────────────
 
-    if not seed_url:
-        # Try http as a last resort
-        for path in SEED_PATHS:
-            candidate = f"http://{domain}{path}"
-            try:
-                r = session.get(candidate, timeout=timeout, allow_redirects=True)
-                if r.ok and "text/html" in r.headers.get("Content-Type", ""):
-                    seed_url = r.url
-                    break
-            except requests.RequestException:
-                continue
-
-    if not seed_url:
-        result.errors.append(f"Could not reach {domain} on any of: {SEED_PATHS}")
+    # 2a. Homepage (required — bail if unreachable)
+    homepage_snap, homepage_soup = _fetch_and_analyze(
+        session, f"https://{domain}/", domain, timeout, "homepage"
+    )
+    if homepage_snap is None:
+        homepage_snap, homepage_soup = _fetch_and_analyze(
+            session, f"http://{domain}/", domain, timeout, "homepage"
+        )
+    if homepage_snap is None:
+        result.errors.append(f"Could not reach {domain}")
         result.health_score = 0
         return result
 
-    # 3. BFS crawl
-    seen: set[str] = set()
-    queue: list[str] = [seed_url]
-    consecutive_errors = 0
+    result.pages_analyzed.append(homepage_snap)
+    result.pages_crawled += 1
+    result.homepage_url = homepage_snap.url
+    result.has_ssl = homepage_snap.url.startswith("https://")
+    seen.add(homepage_snap.url)
 
-    while queue and len(result.pages_analyzed) < max_pages and consecutive_errors < 3:
-        url = queue.pop(0)
+    # Seed keyword for service page discovery
+    if not main_keyword and homepage_soup is not None:
+        main_keyword = _derive_main_keyword(homepage_soup, domain)
+
+    def _targeted_fetch(candidates: list[str], page_type: str) -> tuple:
+        """Try each candidate URL; return (snap, soup) for the first that works."""
+        for url in candidates:
+            if url in seen:
+                continue
+            snap, soup = _fetch_and_analyze(session, url, domain, timeout, page_type)
+            if snap is not None:
+                return snap, soup
+        return None, None
+
+    # 2b. About page
+    if len(result.pages_analyzed) < max_pages:
+        about_candidates = []
+        if homepage_soup is not None:
+            found = _find_nav_url(homepage_soup, domain, _ABOUT_PATHS)
+            if found:
+                about_candidates.append(found)
+        about_candidates += [f"https://{domain}{p}" for p in _ABOUT_PATHS]
+
+        about_snap, _ = _targeted_fetch(about_candidates, "about")
+        if about_snap:
+            result.pages_analyzed.append(about_snap)
+            result.pages_crawled += 1
+            result.about_url = about_snap.url
+            seen.add(about_snap.url)
+
+    # 2c. Contact page
+    if len(result.pages_analyzed) < max_pages:
+        contact_candidates = []
+        if homepage_soup is not None:
+            found = _find_nav_url(homepage_soup, domain, _CONTACT_PATHS)
+            if found:
+                contact_candidates.append(found)
+        contact_candidates += [f"https://{domain}{p}" for p in _CONTACT_PATHS]
+
+        contact_snap, _ = _targeted_fetch(contact_candidates, "contact")
+        if contact_snap:
+            result.pages_analyzed.append(contact_snap)
+            result.pages_crawled += 1
+            result.contact_url = contact_snap.url
+            seen.add(contact_snap.url)
+
+    # 2d. Service page (matches the business's primary keyword)
+    if len(result.pages_analyzed) < max_pages and homepage_soup is not None:
+        service_url = _find_service_page_url(homepage_soup, domain, main_keyword)
+        if service_url and service_url not in seen:
+            service_snap, _ = _fetch_and_analyze(
+                session, service_url, domain, timeout, "service"
+            )
+            if service_snap:
+                result.pages_analyzed.append(service_snap)
+                result.pages_crawled += 1
+                result.service_url = service_snap.url
+                result.service_keyword = main_keyword
+                seen.add(service_snap.url)
+
+    # ── Phase 2: BFS for remaining page budget ─────────────────────────────
+
+    # Seed queue from homepage links
+    bfs_queue: list[str] = []
+    if homepage_soup is not None:
+        for a in homepage_soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if not href or href.startswith("#") or href.startswith("mailto:"):
+                continue
+            absolute = urljoin(result.homepage_url, href).split("#")[0]
+            if _is_internal(absolute, domain) and absolute not in seen:
+                bfs_queue.append(absolute)
+
+    consecutive_errors = 0
+    while bfs_queue and len(result.pages_analyzed) < max_pages and consecutive_errors < 3:
+        url = bfs_queue.pop(0)
         if url in seen:
             continue
         seen.add(url)
@@ -285,31 +404,33 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15) -> CrawlRe
                 continue
 
             consecutive_errors = 0
-            redirect_hops = len(r.history)
-            resp_ms = int(r.elapsed.total_seconds() * 1000)
-            snap = _extract_page_signals(r.text, r.url, size_bytes=len(r.content), response_ms=resp_ms, redirect_hops=redirect_hops)
+            snap = _extract_page_signals(
+                r.text, r.url,
+                size_bytes=len(r.content),
+                response_ms=int(r.elapsed.total_seconds() * 1000),
+                redirect_hops=len(r.history),
+            )
+            snap.page_type = "other"
             result.pages_analyzed.append(snap)
             result.pages_crawled += 1
 
-            # Pick up new internal links
-            soup = BeautifulSoup(r.text, "lxml")
-            for a in soup.find_all("a", href=True):
+            # Expand queue from this page
+            link_soup = BeautifulSoup(r.text, "lxml")
+            for a in link_soup.find_all("a", href=True):
                 href = a["href"].strip()
                 if not href or href.startswith("#") or href.startswith("mailto:"):
                     continue
-                absolute = urljoin(r.url, href)
-                # Strip fragment
-                absolute = absolute.split("#")[0]
+                absolute = urljoin(r.url, href).split("#")[0]
                 if _is_internal(absolute, domain) and absolute not in seen:
-                    queue.append(absolute)
+                    bfs_queue.append(absolute)
 
-            time.sleep(0.5)  # polite delay
+            time.sleep(0.5)
 
         except requests.RequestException as e:
             consecutive_errors += 1
             result.errors.append(f"Request error on {url}: {e}")
 
-    # 4. Aggregate
+    # 3. Aggregate
     _aggregate(result)
     return result
 
@@ -524,6 +645,14 @@ def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms:
     # Agent readability signals
     _extract_a11y_signals(snap, soup)
 
+    # Credibility signals (used on every page; aggregated from homepage)
+    cred = _extract_credibility_signals(soup, url)
+    snap.has_privacy_link = cred["has_privacy_link"]
+    snap.has_terms_link = cred["has_terms_link"]
+    snap.has_nap_signals = cred["has_nap_signals"]
+    snap.has_trust_signals = cred["has_trust_signals"]
+    snap.has_social_links = cred["has_social_links"]
+
     return snap
 
 
@@ -715,14 +844,33 @@ def _aggregate(result: CrawlResult) -> None:
 
     result.broken_links = [p.url for p in pages if p.broken_links_on_page > 0]
 
-    about_paths = ("/about", "/about-us", "/company", "/our-story", "/team")
-    contact_paths = ("/contact", "/contact-us", "/get-in-touch", "/support", "/help")
-    for p in pages:
-        path = urlparse(p.url).path.rstrip("/").lower()
-        if any(path == ap or path.endswith(ap) for ap in about_paths):
-            result.has_about_page = True
-        if any(path == cp or path.endswith(cp) for cp in contact_paths):
-            result.has_contact_page = True
+    # has_about_page / has_contact_page — from targeted URLs first, then URL scan
+    if result.about_url:
+        result.has_about_page = True
+    if result.contact_url:
+        result.has_contact_page = True
+    if not result.has_about_page or not result.has_contact_page:
+        about_paths = ("/about", "/about-us", "/company", "/our-story", "/team")
+        contact_paths = ("/contact", "/contact-us", "/get-in-touch", "/support", "/help")
+        for p in pages:
+            path = urlparse(p.url).path.rstrip("/").lower()
+            if any(path == ap or path.endswith(ap) for ap in about_paths):
+                result.has_about_page = True
+            if any(path == cp or path.endswith(cp) for cp in contact_paths):
+                result.has_contact_page = True
+
+    # Credibility fields — from homepage snapshot (first page tagged "homepage",
+    # or the first page as fallback for BFS-only runs)
+    homepage_snap = next(
+        (p for p in pages if p.page_type == "homepage"),
+        pages[0] if pages else None,
+    )
+    if homepage_snap:
+        result.has_privacy_policy = homepage_snap.has_privacy_link
+        result.has_terms = homepage_snap.has_terms_link
+        result.has_contact_info_on_homepage = homepage_snap.has_nap_signals
+        result.has_trust_signals_on_homepage = homepage_snap.has_trust_signals
+        result.has_social_links = homepage_snap.has_social_links
 
     # Agent readability aggregates
     if pages:
@@ -827,6 +975,52 @@ def _aggregate(result: CrawlResult) -> None:
             ),
         ))
 
+    # ── Credibility / baseline trust checks ──────────────────────────────
+    if not result.has_ssl:
+        issues.append(CrawlIssue(
+            category="credibility",
+            severity="critical",
+            detail="Site not served over HTTPS — AI crawlers and modern browsers treat HTTP as insecure",
+        ))
+
+    if not result.has_privacy_policy:
+        issues.append(CrawlIssue(
+            category="credibility",
+            severity="medium",
+            detail="No privacy policy link found on homepage — required for compliance and baseline credibility",
+        ))
+
+    if not result.has_terms:
+        issues.append(CrawlIssue(
+            category="credibility",
+            severity="low",
+            detail="No terms of service link found — baseline legal credibility signal for AI entity evaluation",
+        ))
+
+    if not result.has_contact_info_on_homepage:
+        issues.append(CrawlIssue(
+            category="credibility",
+            severity="medium",
+            detail="No phone number or address on homepage — NAP (name/address/phone) strengthens entity recognition",
+        ))
+
+    if not result.has_trust_signals_on_homepage:
+        issues.append(CrawlIssue(
+            category="credibility",
+            severity="medium",
+            detail=(
+                "No testimonials, reviews, or client logos detected on homepage — "
+                "social proof signals influence AI recommendation likelihood"
+            ),
+        ))
+
+    if not result.has_social_links:
+        issues.append(CrawlIssue(
+            category="credibility",
+            severity="low",
+            detail="No social media links found — social presence is a minor entity authority signal for AI engines",
+        ))
+
     result.issues = issues
     result.health_score = _compute_health_score(result)
 
@@ -885,6 +1079,20 @@ def _compute_health_score(result: CrawlResult) -> int:
     if result.pages_with_landmarks == 0:
         score -= 5
     score += min(5, result.pages_with_landmarks)
+
+    # ── Credibility signals ──
+    if not result.has_ssl:
+        score -= 15
+    if result.has_privacy_policy:
+        score += 3
+    if result.has_terms:
+        score += 2
+    if result.has_contact_info_on_homepage:
+        score += 3
+    if result.has_trust_signals_on_homepage:
+        score += 5
+    if result.has_social_links:
+        score += 2
 
     # ── Apply caps based on issue severity ──
     severities = result.issues_by_severity
@@ -1093,3 +1301,206 @@ def _extract_a11y_signals(snap: PageSnapshot, soup: BeautifulSoup) -> None:
     score += min(5, snap.aria_labeled_elements)
 
     snap.agent_readability_score = max(0, min(100, score))
+
+
+# ---------------------------------------------------------------------------
+# Targeted crawl helpers
+# ---------------------------------------------------------------------------
+
+
+def _fetch_and_analyze(
+    session: requests.Session,
+    url: str,
+    domain: str,
+    timeout: int,
+    page_type: str,
+) -> tuple:
+    """
+    Fetch `url` and return (PageSnapshot, BeautifulSoup) or (None, None).
+
+    The soup is returned so the caller can extract nav links for further
+    discovery without re-parsing.
+    """
+    try:
+        r = session.get(url, timeout=timeout, allow_redirects=True)
+        if not r.ok or "text/html" not in r.headers.get("Content-Type", ""):
+            return None, None
+        snap = _extract_page_signals(
+            r.text, r.url,
+            size_bytes=len(r.content),
+            response_ms=int(r.elapsed.total_seconds() * 1000),
+            redirect_hops=len(r.history),
+        )
+        snap.page_type = page_type
+        soup = BeautifulSoup(r.text, "lxml")
+        return snap, soup
+    except requests.RequestException:
+        return None, None
+
+
+def _find_nav_url(soup: BeautifulSoup, domain: str, path_patterns: list) -> Optional[str]:
+    """
+    Scan all <a> tags for the first link whose path matches one of
+    `path_patterns` (exact or ends-with match). Returns an absolute URL or None.
+    """
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href:
+            continue
+        if href.startswith("/"):
+            path = href.split("?")[0].rstrip("/").lower()
+            if any(path == p or path.endswith(p) for p in path_patterns):
+                return f"https://{domain}{href.split('?')[0]}"
+        else:
+            try:
+                parsed = urlparse(href)
+                if not _is_internal(href, domain):
+                    continue
+                path = parsed.path.rstrip("/").lower()
+                if any(path == p or path.endswith(p) for p in path_patterns):
+                    return href.split("?")[0]
+            except ValueError:
+                continue
+    return None
+
+
+def _find_service_page_url(soup: BeautifulSoup, domain: str, main_keyword: str = "") -> Optional[str]:
+    """
+    Find the best service/product page from the homepage's nav links.
+
+    Scoring:
+      +10  URL path matches a known service-type pattern
+      +3×N keyword overlap between nav link text/path and main_keyword words
+      -1×depth  prefer top-level pages
+
+    Non-service paths (about, contact, blog, privacy…) are excluded.
+    """
+    keyword_words: set[str] = set()
+    if main_keyword:
+        keyword_words = {w for w in re.split(r"\W+", main_keyword.lower()) if len(w) > 2}
+
+    candidates: list[tuple[int, str]] = []
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith("#") or href.startswith("mailto:"):
+            continue
+
+        # Resolve to absolute URL
+        if href.startswith("/"):
+            abs_url = f"https://{domain}{href.split('?')[0]}"
+        elif _is_internal(href, domain):
+            abs_url = href.split("?")[0]
+        else:
+            continue
+
+        path = urlparse(abs_url).path.rstrip("/").lower()
+        if not path or path == "/":
+            continue
+        if _NON_SERVICE_PATH_RE.search(path):
+            continue
+
+        score = 0
+        if _SERVICE_PATH_RE.search(path):
+            score += 10
+
+        if keyword_words:
+            path_words = set(re.split(r"[-/_]", path))
+            anchor_words = {
+                w for w in re.split(r"\W+", a.get_text(" ", strip=True).lower())
+                if len(w) > 2
+            }
+            overlap = len(keyword_words & (path_words | anchor_words))
+            score += overlap * 3
+
+        depth = path.count("/")
+        score -= depth
+
+        if score > 0:
+            candidates.append((score, abs_url))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: -x[0])
+    return candidates[0][1]
+
+
+def _derive_main_keyword(soup: BeautifulSoup, domain: str) -> str:
+    """
+    Derive a rough primary service keyword from homepage H1 or title.
+    Used as a hint for service page discovery when no keyword is supplied.
+    """
+    h1 = soup.find("h1")
+    if h1:
+        text = h1.get_text(" ", strip=True)
+        if 5 < len(text) < 100:
+            return text
+    title_tag = soup.find("title")
+    if title_tag:
+        text = title_tag.get_text(" ", strip=True)
+        for sep in (" | ", " - ", " — ", " :: ", " · "):
+            if sep in text:
+                text = text.split(sep)[0]
+        if 5 < len(text) < 100:
+            return text
+    return domain.split(".")[0]
+
+
+def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
+    """
+    Extract credibility and trust signals from a page's HTML.
+
+    Returns a dict of booleans:
+      has_privacy_link, has_terms_link, has_nap_signals,
+      has_trust_signals, has_social_links
+    """
+    all_links = soup.find_all("a", href=True)
+    page_text = soup.get_text(" ", strip=True).lower()
+
+    # Privacy policy link
+    has_privacy = any(
+        "privacy" in (a.get("href", "") + " " + a.get_text()).lower()
+        for a in all_links
+    )
+
+    # Terms of service / terms & conditions
+    has_terms = any(
+        any(kw in (a.get("href", "") + " " + a.get_text()).lower()
+            for kw in ("terms", "/tos", "conditions", "/legal"))
+        for a in all_links
+    )
+
+    # NAP — phone number or address-like text
+    has_nap = bool(_PHONE_RE.search(page_text))
+    if not has_nap:
+        # Street address pattern: "123 Main Street" style
+        has_nap = bool(re.search(
+            r"\b\d{1,5}\s+\w[\w\s]{2,30}"
+            r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl)\b",
+            page_text,
+        ))
+
+    # Trust signals: testimonials, reviews, ratings, client logos, case studies
+    _TRUST_PATTERNS = [
+        r"\btestimonial", r"\breview", r"\brating", r"\b\d+\s*stars?\b",
+        r"\bclient\s+(?:story|spotlight|result|success)",
+        r"\bcase\s+stud", r"\btrusted\s+by", r"\bused\s+by",
+        r"\bcertif(?:ied|ication)", r"\baward",
+        r"\b\d{1,3}[\s,]\d{3}\+?\s*(?:customer|client|user)",
+    ]
+    has_trust = any(re.search(p, page_text) for p in _TRUST_PATTERNS)
+
+    # Social media links
+    has_social = any(
+        any(sd in a.get("href", "") for sd in _SOCIAL_DOMAINS)
+        for a in all_links
+    )
+
+    return {
+        "has_privacy_link": has_privacy,
+        "has_terms_link": has_terms,
+        "has_nap_signals": has_nap,
+        "has_trust_signals": has_trust,
+        "has_social_links": has_social,
+    }
