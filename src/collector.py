@@ -13,10 +13,9 @@ from typing import Optional
 from src.engines import (
     PerplexityEngine,
     ChatGPTEngine,
-    ClaudeEngine,
-    GeminiEngine,
 )
-from src.scoring import extract_brand_mentions
+from src.gemini_dataforseo import GeminiDataForSEOEngine
+from src.scoring import extract_brand_mentions, brands_from_citations
 
 # ---------------------------------------------------------------------------
 # Engine name map — lowercase internal → display name
@@ -25,7 +24,6 @@ from src.scoring import extract_brand_mentions
 ENGINE_DISPLAY_NAMES: dict[str, str] = {
     "perplexity": "Perplexity",
     "chatgpt": "ChatGPT",
-    "claude": "Claude",
     "gemini": "Gemini",
 }
 
@@ -57,7 +55,23 @@ def execute_all(
     Engine failures are handled gracefully — the result dict will have
     error populated and empty lists for citations/brand_mentions/positions.
     """
-    engine_classes = [PerplexityEngine, ChatGPTEngine, ClaudeEngine, GeminiEngine]
+    # Only engines that return real citations/sources.
+    # Claude removed: doesn't return URL annotations via OpenRouter.
+    # Gemini uses DataForSEO LLM Scraper API for real citations.
+    class _GeminiWrapper:
+        """Wraps GeminiDataForSEOEngine to match the constructor signature."""
+        _engine_name = "gemini"
+        def __init__(self, api_key=None):
+            self._inner = GeminiDataForSEOEngine(target_domain=target_domain)
+        @property
+        def name(self):
+            return self._inner.name
+        def is_real(self):
+            return self._inner.is_real()
+        def query(self, topic):
+            return self._inner.query(topic)
+
+    engine_classes = [PerplexityEngine, ChatGPTEngine, _GeminiWrapper]
 
     results: list[dict] = []
 
@@ -102,8 +116,11 @@ def execute_all(
                     "error": str(e),
                 }
 
-            # Extract brand mentions from the response text
+            # Extract brand mentions — per-platform approach:
+            # 1. Primary: brands from citation domains (URLs returned by engine)
+            # 2. Fallback: regex on response text for capitalized phrases
             text = raw.get("text", "") or ""
+            citations = raw.get("citations", []) or []
             error = raw.get("error")
 
             if error:
@@ -111,9 +128,23 @@ def execute_all(
                 positions: list[int] = []
             else:
                 try:
-                    brand_mentions, positions = extract_brand_mentions(
+                    # Primary: extract brands from actual cited domains
+                    citation_brands = brands_from_citations(citations)
+
+                    # Fallback: regex on text for any brands not in citations
+                    text_brands, text_positions = extract_brand_mentions(
                         text, target_domain
                     )
+
+                    # Merge: citation brands first (more reliable), then text brands
+                    seen_lower = {b.lower() for b in citation_brands}
+                    for b in text_brands:
+                        if b.lower() not in seen_lower:
+                            citation_brands.append(b)
+                            seen_lower.add(b.lower())
+
+                    brand_mentions = citation_brands
+                    positions = text_positions
                 except Exception:
                     brand_mentions = []
                     positions = []

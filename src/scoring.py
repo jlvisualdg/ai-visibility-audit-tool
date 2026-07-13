@@ -238,6 +238,57 @@ def extract_brand_mentions(
 
 
 # ---------------------------------------------------------------------------
+
+def brands_from_citations(citations: list[str]) -> list[str]:
+    """Convert citation domains to humanized brand names.
+
+    Examples:
+        ["winonahealth.com"] -> ["Winona Health"]
+        ["midihealth.com"] -> ["Midi Health"]
+        ["www.nobelprize.org"] -> ["Nobel Prize"]
+
+    This is the primary brand extraction path — it uses the actual cited
+    sources (URLs/domains) returned by each engine, not regex on text.
+    """
+    brands: list[str] = []
+    for url_or_domain in citations:
+        domain = _domain_from_url(url_or_domain)
+        if not domain:
+            continue
+        bare = domain.split(".")[0]
+        # Skip generic TLDs / www
+        if bare in ("www", "https", "http"):
+            continue
+        # Skip common non-brand domains
+        skip = {"google", "wikipedia", "youtube", "reddit", "amazon",
+                "facebook", "twitter", "x", "instagram", "linkedin",
+                "pinterest", "tiktok", "medium", "quora", "yahoo",
+                "bing", "duckduckgo", "yandex", "baidu"}
+        if bare.lower() in skip:
+            continue
+        # Humanize: split camelCase, hyphens
+        parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare)
+        parts = parts.replace("-", " ").replace("_", " ")
+        brand = " ".join(w.capitalize() for w in parts.split())
+        if len(brand) > 2 and brand.lower() not in {b.lower() for b in brands}:
+            brands.append(brand)
+    return brands
+
+
+def _domain_from_url(url_or_domain: str) -> str:
+    """Extract bare domain from URL or domain string."""
+    from urllib.parse import urlparse
+    s = url_or_domain.strip().lower()
+    if s.startswith(("http://", "https://")):
+        host = urlparse(s).netloc
+    else:
+        host = s.split("/")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

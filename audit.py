@@ -51,10 +51,6 @@ _MOCK_ENGINE_BRANDS: dict[str, list[str]] = {
         "Brand Epsilon", "Brand Iota", "Brand Gamma", "Brand Kappa",
         "Brand Alpha", "Brand Lambda", "Brand Mu", "Brand Nu",
     ],
-    "Claude": [
-        "Brand Gamma", "Brand Zeta", "Brand Beta", "Brand Epsilon",
-        "Brand Delta", "Brand Xi", "Brand Omicron", "Brand Pi",
-    ],
     "Gemini": [
         "Brand Beta", "Brand Alpha", "Brand Iota", "Brand Nu",
         "Brand Kappa", "Brand Epsilon", "Brand Lambda", "Brand Zeta",
@@ -64,19 +60,18 @@ _MOCK_ENGINE_BRANDS: dict[str, list[str]] = {
 # Which topics does the target brand appear in (per engine, for mock)?
 _MOCK_TARGET_PRESENCE: dict[str, set[int]] = {
     "Perplexity": {0, 2},       # topics index 0 and 2
-    "ChatGPT": {0, 1, 2},       # topics 0, 1, 2
-    "Claude": {2},               # only topic 2
-    "Gemini": {1, 3},            # topics 1 and 3
+    "ChatGPT": {0, 1},          # topics 0 and 1
+    "Gemini": {1, 3},           # topics 1 and 3
 }
 
 
 def _generate_mock_results(domain: str, topics: list[str]) -> list[dict]:
-    """Generate 20 synthetic results (5 topics x 4 engines) for --no-ai mode.
+    """Generate synthetic results (4 topics × 3 engines) for --no-ai mode.
 
     Each result matches the dict shape produced by ``execute_all()``.
     Varied presence across engines/topics so the report shows realistic patterns.
     """
-    engines = ["Perplexity", "ChatGPT", "Claude", "Gemini"]
+    engines = ["Perplexity", "ChatGPT", "Gemini"]
     target_tokens = _extract_target_tokens(domain)
     target_brand = " ".join(w.capitalize() for w in target_tokens[0].split()) if target_tokens else domain.split(".")[0].title()
 

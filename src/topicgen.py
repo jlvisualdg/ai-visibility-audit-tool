@@ -35,7 +35,7 @@ def generate_botf_topics(
     domain: str,
     homepage_html: Optional[str] = None,
     api_key: Optional[str] = None,
-    n: int = 5,
+    n: int = 4,
     timeout: int = 30,
 ) -> list[str]:
     """
@@ -111,8 +111,8 @@ Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
     #    "how to", "cost of", "reviews of", etc.  Up to 2 retries.
     topics = _validate_and_retry_topics(topics, key, prompt, timeout)
 
-    # 6. Post-process: replace positions [0] and [3] with keyword-variation queries
-    if len(topics) >= 5:
+    # 6. Post-process: replace positions [0] and [2] with keyword-variation queries
+    if len(topics) >= 4:
         _inject_keyword_variations(topics, body, key, timeout)
 
     return topics[:n]
@@ -339,9 +339,9 @@ def _inject_keyword_variations(
         if var_match:
             variations = json.loads(var_match.group())
             if isinstance(variations, list) and len(variations) >= 2:
-                # Slot into positions [0] and [3]
+                # Slot into positions [0] and [2]
                 topics[0] = variations[0]
-                topics[3] = variations[1]
+                topics[2] = variations[1]
     except (requests.RequestException, json.JSONDecodeError, KeyError):
         return
 

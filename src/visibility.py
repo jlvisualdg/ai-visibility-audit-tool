@@ -399,11 +399,15 @@ def build_engines(
     except Exception:
         engines.append(MockEngine("chatgpt"))
 
+    # Gemini — real via DataForSEO LLM Scraper API (returns cited sources)
+    try:
+        from src.gemini_dataforseo import GeminiDataForSEOEngine
+        engines.append(GeminiDataForSEOEngine(target_domain=target_domain))
+    except Exception:
+        engines.append(MockEngine("gemini"))
+
     # Claude — removed: doesn't return citations via OpenRouter
     # engines.append(MockEngine("claude"))
-
-    # Gemini — removed: doesn't return citations via OpenRouter
-    # engines.append(MockEngine("gemini"))
 
     return engines
 
