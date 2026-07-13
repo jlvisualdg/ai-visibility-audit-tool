@@ -271,6 +271,41 @@ body {
     margin-bottom: 16px;
 }
 
+/* AEO Score hero */
+.aeo-score-hero {
+    text-align: center;
+    margin-bottom: 24px;
+    padding: 20px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.aeo-score-value {
+    font-family: var(--font-display);
+    font-size: 72px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+.aeo-score-label {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 8px;
+}
+
+.aeo-score-breakdown {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    margin-top: 8px;
+}
+
 .diagnostic-summary p {
     font-size: 15px;
     line-height: 1.6;
@@ -1195,7 +1230,20 @@ body {
    ==================================================================== #}
 <section class="diagnostic">
     <div class="diagnostic-label">The Diagnostic</div>
-    
+
+    {# AEO Score — aggregate rating 0/10 #}
+    {# Computed from AI Presence (coverage %) + Indexability health score #}
+    {% set aeo_raw = (report.ai_coverage_pct * 0.6) + (report.crawl_signals.health_score * 0.4) %}
+    {% set aeo_score = (aeo_raw / 10)|round(1) %}
+    <div class="aeo-score-hero">
+        <div class="aeo-score-value">{{ aeo_score }}</div>
+        <div class="aeo-score-label">Overall AEO Score / 10</div>
+        <div class="aeo-score-breakdown">
+            AI Presence: {{ '%.0f' % report.ai_coverage_pct }}% &middot;
+            Indexability: {{ report.crawl_signals.health_score }}/100
+        </div>
+    </div>
+
     {# Dynamic verdict based on actual data #}
     <div class="diagnostic-summary">
         {% if report.ai_coverage_pct == 0 %}

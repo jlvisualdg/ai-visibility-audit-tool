@@ -377,8 +377,8 @@ def extract_brand_mentions(
 # Regex for detecting numbered-list item prefixes like "1.", "2)", "1 -", etc.
 _LIST_ITEM_RE = re.compile(r"^\s*(?:\d+[.\)]\s*|[-*]\s+)(.+)", re.MULTILINE)
 
-# Regex for bold markdown: **Brand Name** or __Brand Name__
-_BOLD_RE = re.compile(r"\*\*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\*\*")
+# Regex for bold markdown: **Brand Name** or **Brand** (single or multi-word)
+_BOLD_RE = re.compile(r"\*\*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\*\*")
 
 # Regex for linked markdown: [Brand Name](url)
 _LINKED_RE = re.compile(r"\[([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\]\(")
@@ -558,6 +558,16 @@ _DESCRIPTIVE_TERMS: set[str] = {
     "affordable options",
     "budget-friendly options",
     "value-based pricing",
+    "best for",
+    "wide treatment range",
+    "fast low-commitment access",
+    "flat-rate with labs",
+    "upfront pricing",
+    "low-friction start",
+    "cash-pay option",
+    "pay-by-visit",
+    "additional resources",
+    "key features",
 }
 
 # City names that get capitalized but aren't brands
@@ -577,6 +587,11 @@ def _extract_brands_from_block(block: str) -> list[str]:
     - Bold text: "**Midi Health** offers..."
     - Linked text: "[Midi Health](https://...)"
     - Connector brands in lists: "1. Johnson & Johnson - ..."
+
+    Filters OUT:
+    - Markdown table rows (| Col1 | Col2 |)
+    - Table column headers
+    - Phrases containing " & " that are descriptive (e.g. "Testosterone & Estradiol")
     """
     candidates: list[str] = []
     seen_lower: set[str] = set()
@@ -586,40 +601,70 @@ def _extract_brands_from_block(block: str) -> list[str]:
             candidates.append(phrase)
             seen_lower.add(phrase.lower())
 
+    # Skip markdown table rows entirely — they contain column headers
+    # and descriptive labels, not brand recommendations
+    # Detect lines starting with | (table rows) or :--- (table separators)
+    lines = block.split("\n")
+    non_table_lines = []
+    in_table = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("|") or stripped.startswith(":--") or stripped.startswith("--:"):
+            in_table = True
+            # But extract bold brands from table cells (e.g. | **Midi Health** | ...)
+            for m in _BOLD_RE.finditer(stripped):
+                _add(m.group(1))
+            continue
+        else:
+            if in_table and not stripped:
+                in_table = False
+            non_table_lines.append(line)
+
+    clean_block = "\n".join(non_table_lines)
+
     # 1. List items: "1. Brand Name ..." or "- Brand Name ..."
-    for m in _LIST_ITEM_RE.finditer(block):
+    for m in _LIST_ITEM_RE.finditer(clean_block):
         item_text = m.group(1).strip()
         # Extract the first capitalized phrase from the list item
-        # (this is typically the brand name before the description)
         brand_match = PLAIN_BRAND.match(item_text)
         if brand_match:
             _add(brand_match.group(1))
         else:
-            # Try connector brand in list
-            conn_match = _LIST_CONNECTOR_RE.match(block[block.index(item_text)-3:])
-            if conn_match:
-                _add(conn_match.group(1))
             # Single capitalized word as brand (e.g. "Winona")
-            elif re.match(r'^[A-Z][a-z]{2,}\b', item_text):
-                single = re.match(r'^([A-Z][a-z]{2,})\b', item_text)
-                if single:
-                    _add(single.group(1))
+            single = re.match(r'^([A-Z][a-z]{2,})\b', item_text)
+            if single:
+                _add(single.group(1))
 
-    # 2. Bold brands in this block
-    for m in _BOLD_RE.finditer(block):
+    # 2. Bold brands in clean block (table bolds already extracted above)
+    for m in _BOLD_RE.finditer(clean_block):
         _add(m.group(1))
 
-    # 3. Linked brands in this block
-    for m in _LINKED_RE.finditer(block):
+    # 3. Linked brands
+    for m in _LINKED_RE.finditer(clean_block):
         _add(m.group(1))
 
-    # 4. Plain brand regex (catches brands in any context within the block)
-    for m in PLAIN_BRAND.finditer(block):
+    # 4. Plain brand regex on clean block only (not table rows)
+    for m in PLAIN_BRAND.finditer(clean_block):
         _add(m.group(1))
 
-    # 5. Connector brands (Johnson & Johnson)
-    for m in CONNECTOR_BRAND.finditer(block):
-        _add(m.group(1))
+    # 5. Connector brands — but only if both parts are plausible brand names
+    # (filters out "Testosterone & Estradiol", "Skin & Beauty", etc.)
+    for m in CONNECTOR_BRAND.finditer(clean_block):
+        phrase = m.group(1)
+        parts = re.split(r'\s+(?:&|and)\s+', phrase, flags=re.IGNORECASE)
+        if len(parts) == 2:
+            # Both parts must look like brand names (not generic words)
+            p1, p2 = parts[0].lower(), parts[1].lower()
+            _MEDICAL_WORDS = {
+                "testosterone", "estrogen", "progesterone", "estradiol",
+                "hormone", "hormones", "skin", "beauty", "hair", "nails",
+                "weight", "sleep", "mood", "energy", "libido", "menopause",
+                "perimenopause", "wellness", "health", "care", "medical",
+                "clinical", "nutrition", "fitness", "mental", "physical",
+                "sexual", "digestive", "immune", "bone", "heart", "brain",
+            }
+            if p1 not in _MEDICAL_WORDS and p2 not in _MEDICAL_WORDS:
+                _add(phrase)
 
     return candidates
 
@@ -747,7 +792,7 @@ def _is_plausible_brand(phrase: str) -> bool:
       - Phrases ≤ 5 characters total (too short to be meaningful).
     """
     words = phrase.split()
-    if len(phrase) <= 5:
+    if len(phrase) <= 3:
         return False
     if all(w.lower() in STOP_WORDS for w in words):
         return False
