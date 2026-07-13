@@ -1090,34 +1090,49 @@ def aggregate_results(results: list[dict], target_domain: str) -> dict:
 
     target_tokens = _extract_target_tokens(target_domain)
 
-    # ---- AI Presence: average coverage % across all query x engine cells ----
-    # A cell is "covered" if the target brand was mentioned in the answer text
-    # (brand recommendation) OR the target domain was cited as a source (URL citation).
-    # AI Presence = covered_cells / total_cells * 100
-    covered_count = 0
-    for r in results:
-        mention_count = r.get("target_mention_count", 0)
-        citations = r.get("citations", []) or []
-        has_citation = any(_domain_contains_citation(c, target_domain) for c in citations)
-        if mention_count > 0 or has_citation:
-            covered_count += 1
-
-    total_count = len(results)
-    ai_presence_pct = (100.0 * covered_count / total_count) if total_count > 0 else 0.0
-
-    # ---- Per-query scores keyed by engine and topic (for best_model/best_topic) ----
-    # Use covered (1.0) or not (0.0) as the per-cell score
+    # ---- AI Presence: position/mention-weighted score across all cells ----
+    # Uses the documented formula from docs/scoring_system.md:
+    #   Position_Score  = (total_brands - first_position + 1) / total_brands * 100
+    #   Mention_Multiplier = min(mentions, 3) / 3
+    #   Query_Score     = min(Position_Score × Mention_Multiplier, 100)
+    #   ai_presence_pct = mean(Query_Score for all cells)
+    #
+    # Citations contribute a bonus: a cell where the target domain is cited
+    # but the brand wasn't mentioned in text gets a floor score of 25.0
+    # (present but not recommended — real signal, just weaker than a mention).
     engine_scores: dict[str, list[float]] = {}
     topic_scores: dict[str, list[float]] = {}
+    all_query_scores: list[float] = []
+
     for r in results:
+        mention_count = r.get("target_mention_count", 0) or 0
+        positions = r.get("positions", []) or []
+        brand_mentions = r.get("brand_mentions", []) or []
+        citations = r.get("citations", []) or []
         eng = r.get("engine", "")
         topic = r.get("topic", "")
-        mention_count = r.get("target_mention_count", 0)
-        citations = r.get("citations", []) or []
-        has_citation = any(_domain_contains_citation(c, target_domain) for c in citations)
-        cell_score = 1.0 if (mention_count > 0 or has_citation) else 0.0
+
+        total_brands = len(brand_mentions)
+        first_position = positions[0] if positions else None
+
+        cell_score = calculate_ai_presence_score(
+            mention_count=mention_count,
+            first_position=first_position,
+            total_brands=total_brands,
+        )
+
+        # Citation floor: if the domain was cited as a source but didn't earn
+        # a mention score, credit 25 points (cited-only is real AEO value)
+        if cell_score == 0.0:
+            has_citation = any(_domain_contains_citation(c, target_domain) for c in citations)
+            if has_citation:
+                cell_score = 25.0
+
+        all_query_scores.append(cell_score)
         engine_scores.setdefault(eng, []).append(cell_score)
         topic_scores.setdefault(topic, []).append(cell_score)
+
+    ai_presence_pct = calculate_overall_ai_presence(all_query_scores)
 
     # ---- Best model ----
     best_model = ""
