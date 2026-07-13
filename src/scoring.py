@@ -165,11 +165,42 @@ AI_ISM_PHRASES: list[str] = [
     "low-dose estrogen",
     "combination therapy",
     "estrogen-only therapy",
-    "cyclic therapy",
-    "continuous therapy",
+    "estrogen pills", "oral estrogen",
+    "estrogen cream", "progesterone pills",
+    "alternative & longevity",
+    "female hormonal health",
+    "menopausal & perimenopausal",
+    "virtual telehealth subscriptions",
+    "hormonal health",
+    "telehealth subscriptions",
+    "bioidentical hormone",
+    "hormone pellets",
+    "estrogen patches",
+    "progesterone cream",
+    "testosterone therapy",
+    "thyroid medication",
+    "birth control",
+    "fertility treatments",
+    "mental wellness",
+    "sexual health",
+    "digestive health",
+    "immune support",
+    "stress management",
+    "sleep aids",
+    "pain management",
+    "chronic conditions",
+    "acute care",
+    "urgent care",
+    "primary physician",
+    "specialist referral",
+    "lab testing",
+    "blood work",
+    "diagnostic imaging",
+    "preventive screening",
+    "annual exam",
+    "wellness exam",
+    "physical exam",
 ]
-
-
 # ---------------------------------------------------------------------------
 # Regex: multi-word capitalized brand name
 # ---------------------------------------------------------------------------
@@ -386,6 +417,41 @@ _DESCRIPTIVE_TERMS: set[str] = {
     "estrogen-only therapy",
     "cyclic therapy",
     "continuous therapy",
+    "estrogen pills", "oral estrogen",
+    "estrogen cream", "progesterone pills",
+    "alternative & longevity",
+    "female hormonal health",
+    "menopausal & perimenopausal",
+    "virtual telehealth subscriptions",
+    "hormonal health",
+    "telehealth subscriptions",
+    "bioidentical hormone",
+    "hormone pellets",
+    "estrogen patches",
+    "progesterone cream",
+    "testosterone therapy",
+    "thyroid medication",
+    "birth control",
+    "fertility treatments",
+    "mental wellness",
+    "sexual health",
+    "digestive health",
+    "immune support",
+    "stress management",
+    "sleep aids",
+    "pain management",
+    "chronic conditions",
+    "acute care",
+    "urgent care",
+    "primary physician",
+    "specialist referral",
+    "lab testing",
+    "blood work",
+    "diagnostic imaging",
+    "preventive screening",
+    "annual exam",
+    "wellness exam",
+    "physical exam",
 }
 
 # City names that get capitalized but aren't brands
@@ -873,33 +939,34 @@ def aggregate_results(results: list[dict], target_domain: str) -> dict:
 
     target_tokens = _extract_target_tokens(target_domain)
 
-    # ---- Per-query AI presence scores ----
-    query_scores: list[float] = []
+    # ---- AI Presence: average coverage % across all query x engine cells ----
+    # A cell is "covered" if the target brand was mentioned in the answer text
+    # (brand recommendation) OR the target domain was cited as a source (URL citation).
+    # AI Presence = covered_cells / total_cells * 100
+    covered_count = 0
     for r in results:
         mention_count = r.get("target_mention_count", 0)
-        positions = r.get("positions", []) or []
-        first_position = positions[0] if positions else None
-        brand_mentions = r.get("brand_mentions", []) or []
-        total_brands = len(brand_mentions)
+        citations = r.get("citations", []) or []
+        has_citation = any(_domain_contains_citation(c, target_domain) for c in citations)
+        if mention_count > 0 or has_citation:
+            covered_count += 1
 
-        score = calculate_ai_presence_score(
-            mention_count=mention_count,
-            first_position=first_position,
-            total_brands=total_brands,
-        )
-        query_scores.append(score)
+    total_count = len(results)
+    ai_presence_pct = (100.0 * covered_count / total_count) if total_count > 0 else 0.0
 
-    # ---- AI presence pct ----
-    ai_presence_pct = statistics.mean(query_scores) if query_scores else 0.0
-
-    # ---- Per-query scores keyed by engine and topic ----
+    # ---- Per-query scores keyed by engine and topic (for best_model/best_topic) ----
+    # Use covered (1.0) or not (0.0) as the per-cell score
     engine_scores: dict[str, list[float]] = {}
     topic_scores: dict[str, list[float]] = {}
-    for r, score in zip(results, query_scores):
+    for r in results:
         eng = r.get("engine", "")
         topic = r.get("topic", "")
-        engine_scores.setdefault(eng, []).append(score)
-        topic_scores.setdefault(topic, []).append(score)
+        mention_count = r.get("target_mention_count", 0)
+        citations = r.get("citations", []) or []
+        has_citation = any(_domain_contains_citation(c, target_domain) for c in citations)
+        cell_score = 1.0 if (mention_count > 0 or has_citation) else 0.0
+        engine_scores.setdefault(eng, []).append(cell_score)
+        topic_scores.setdefault(topic, []).append(cell_score)
 
     # ---- Best model ----
     best_model = ""

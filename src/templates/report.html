@@ -1343,7 +1343,7 @@ body {
                     {% for engine in report.citation_matrix.engines %}
                         {% set cell = report.citation_matrix.result_for(topic, engine) %}
                         {% if cell %}
-                            {% if cell.best_brand_mentions > 0 or cell.best_url_citations > 0 %}
+                            {% if cell.covered %}
                                 <td class="matrix-cell-covered">✓ Mentioned</td>
                             {% else %}
                                 <td class="matrix-cell-missed">✗ Not mentioned</td>
