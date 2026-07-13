@@ -239,13 +239,12 @@ def _build_citation_matrix_from_results(
         def _is_brand_citation(cite_url: str) -> bool:
             """Check if citation domain matches target or any competitor brand."""
             cite_lower = cite_url.lower().strip()
-            # Strip www.
-            if cite_lower.startswith("www."):
-                cite_lower = cite_lower[4:]
-            # Strip protocol
+            # Strip protocol first, then www
             for proto in ("https://", "http://"):
                 if cite_lower.startswith(proto):
                     cite_lower = cite_lower[len(proto):]
+            if cite_lower.startswith("www."):
+                cite_lower = cite_lower[4:]
             cite_bare = cite_lower.split("/")[0].split(".")[0]
 
             # Check if it's a generic domain
