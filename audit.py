@@ -295,6 +295,7 @@ def _build_citation_matrix_from_results(
             best_url_citations=brand_url_citations,
             best_first_section=avg_position,
             top_competitor=top_competitor,
+            target_brand_position=target_position,
         )
         matrix.results.append(tr)
 

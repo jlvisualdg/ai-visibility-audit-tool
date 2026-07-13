@@ -585,6 +585,12 @@ body {
     font-weight: 600;
 }
 
+.matrix-cell-total {
+    font-weight: 400;
+    font-size: 11px;
+    opacity: 0.55;
+}
+
 .matrix-cell-missed {
     color: var(--danger-500);
 }
@@ -1499,9 +1505,13 @@ body {
                         {% set cell = report.citation_matrix.result_for(topic, engine) %}
                         {% if cell %}
                             {% if cell.covered %}
-                                <td class="matrix-cell-covered">✓ Mentioned</td>
+                                {% if cell.target_brand_position %}
+                                    <td class="matrix-cell-covered">✓ #{{ cell.target_brand_position }}{% if cell.best_brand_mentions > 0 %} <span class="matrix-cell-total">of {{ cell.best_brand_mentions }}</span>{% endif %}</td>
+                                {% else %}
+                                    <td class="matrix-cell-covered">✓ cited</td>
+                                {% endif %}
                             {% else %}
-                                <td class="matrix-cell-missed">✗ Not mentioned</td>
+                                <td class="matrix-cell-missed">✗ not mentioned</td>
                             {% endif %}
                         {% else %}
                             <td class="matrix-cell-missed">—</td>

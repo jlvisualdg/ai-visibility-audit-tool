@@ -114,6 +114,8 @@ class TopicResult:
     best_url_citations: int = 0
     best_first_section: Optional[int] = None
     top_competitor: Optional[str] = None
+    # v2.0 — target brand position (1-indexed rank among all brands in response)
+    target_brand_position: Optional[int] = None
 
     @property
     def coverage_rate(self) -> float:
