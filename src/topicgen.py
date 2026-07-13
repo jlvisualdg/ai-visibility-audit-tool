@@ -50,7 +50,7 @@ def generate_botf_topics(
     """
     key = (api_key or OPENROUTER_API_KEY).strip()
     if not key:
-        return _fallback_topics(domain, n)
+        return _fallback_topics(domain, n, homepage_html, key)
 
     # 1. Get homepage content
     if not homepage_html:
@@ -66,7 +66,7 @@ def generate_botf_topics(
             pass
 
     if not homepage_html:
-        return _fallback_topics(domain, n)
+        return _fallback_topics(domain, n, "", key)
 
     # 2. Extract clean text
     soup = BeautifulSoup(homepage_html, "lxml")
@@ -105,7 +105,7 @@ Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
     # 4. Call LLM for initial topics
     topics = _call_llm_for_topics(key, prompt, timeout)
     if topics is None:
-        return _fallback_topics(domain, n)
+        return _fallback_topics(domain, n, homepage_html, key)
 
     # 5. Validate and retry: reject informational queries starting with
     #    "how to", "cost of", "reviews of", etc.  Up to 2 retries.
@@ -346,12 +346,74 @@ def _inject_keyword_variations(
         return
 
 
-def _fallback_topics(domain: str, n: int) -> list[str]:
-    """Basic fallback when LLM is unavailable."""
-    bare = domain.split(".")[0].replace("-", " ").title()
+def _fallback_topics(domain: str, n: int, homepage_html: str = "", api_key: str = "") -> list[str]:
+    """Fallback when LLM is unavailable.
+
+    Generates UNBRANDED commercial BOTF queries using service keywords
+    extracted from the homepage HTML. NEVER uses the brand/domain name.
+    """
+    # Try to extract service keywords from homepage
+    service_keyword = ""
+    if homepage_html:
+        try:
+            soup = BeautifulSoup(homepage_html, "lxml")
+            for tag in soup(["script", "style", "nav", "footer", "svg", "img"]):
+                tag.decompose()
+            body = re.sub(r"\s+", " ", soup.get_text(" ", strip=True)).strip()[:2000]
+            title = soup.title.get_text(strip=True) if soup.title else ""
+            meta_desc = ""
+            meta_tag = soup.find("meta", attrs={"name": "description"})
+            if meta_tag:
+                meta_desc = meta_tag.get("content", "")
+
+            # Use LLM to extract the service keyword even in fallback
+            key = (api_key or OPENROUTER_API_KEY).strip()
+            if key:
+                kw_prompt = (
+                    "Extract the single primary service keyword from this business homepage.\n"
+                    "This should be the 2-6 word phrase describing what the business sells.\n"
+                    'Return ONLY the keyword phrase, nothing else.\n\n'
+                    f"Title: {title}\nMeta: {meta_desc}\nHomepage: {body[:1000]}"
+                )
+                try:
+                    kw_r = requests.post(
+                        TOPICGEN_URL,
+                        headers={
+                            "Authorization": f"Bearer {key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": TOPICGEN_MODEL,
+                            "messages": [{"role": "user", "content": kw_prompt}],
+                            "temperature": 0.0,
+                            "max_tokens": 50,
+                        },
+                        timeout=15,
+                    )
+                    if kw_r.ok:
+                        service_keyword = (
+                            kw_r.json()["choices"][0]["message"]["content"]
+                            .strip().strip('"').strip("'").strip(".")
+                        )
+                except (requests.RequestException, json.JSONDecodeError, KeyError):
+                    pass
+        except Exception:
+            pass
+
+    # If we got a service keyword, build unbranded queries around it
+    if service_keyword and len(service_keyword) > 2:
+        kw = service_keyword.lower()
+        return [
+            f"best {kw} for women",
+            f"top {kw} providers 2026",
+            f"find a {kw} provider online",
+            f"{kw} service pricing and reviews",
+        ][:n]
+
+    # Last resort: generic commercial queries (still unbranded)
     return [
-        f"best {bare.lower()} alternatives",
-        f"{bare} reviews and pricing",
-        f"how to choose a solution like {bare}",
-        f"{bare} vs competitors",
+        "best online service providers for this category",
+        "top rated solutions in this industry 2026",
+        "find a provider for this type of service",
+        "service pricing and reviews comparison",
     ][:n]
