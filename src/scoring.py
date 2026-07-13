@@ -165,20 +165,28 @@ def extract_brand_mentions(
     target_domain: str,
     target_brand_name: str = "",
 ) -> Tuple[list[str], list[int]]:
-    """Extract brand names and track target brand positions.
+    """Extract brand names from AI response text using contextual analysis.
 
-    Scans `response_text` for multi-word capitalized phrases that look like
-    brand names (e.g. "Pareto Talent", "Acme Corp", "Johnson & Johnson"),
-    filters out false positives, and returns deduplicated brands in order
-    of first appearance plus the 1-indexed occurrence positions of the
-    target brand.
+    Brand recommendations in AI responses appear in specific structural contexts:
+    1. Numbered/bulleted list items (e.g. "1. Midi Health - ...")
+    2. Bold or linked markdown (e.g. "**Midi Health**" or "[Midi Health](url)")
+    3. After recommendation verbs ("recommend", "suggest", "consider", "top pick")
+    4. As standalone capitalized names NOT part of a descriptive phrase
+
+    Descriptive phrases like "Hormone Replacement Therapy" or "Online Directories"
+    are filtered out because they appear in prose context, not recommendation context.
+
+    Extraction strategy:
+    1. Split response into blocks (double-newline separated)
+    2. Identify "recommendation blocks" (lists, bold names, linked names)
+    3. Extract capitalized phrases only from recommendation blocks
+    4. Filter through plausibility checks (stop words, AI-isms, descriptive terms)
+    5. Track target brand positions
 
     Args:
         response_text: The AI engine response text to scan.
         target_domain: Domain being audited (e.g. "bywinona.com").
         target_brand_name: Brand name extracted from the scraped page title.
-            If provided, this is added to the target tokens for matching
-            (e.g. "Winona" for bywinona.com).
 
     Returns:
         (unique_brands, target_positions) tuple.
@@ -186,33 +194,33 @@ def extract_brand_mentions(
     if not response_text or not response_text.strip():
         return ([], [])
 
-    # ----- Step 1: find all multi-word capitalized candidates -----
-    raw_matches: list[tuple[int, int, str]] = []  # (start, end, phrase)
+    # ----- Step 1: Contextual block splitting -----
+    # Split on double newlines to get logical blocks
+    blocks = re.split(r'\n\s*\n', response_text)
 
-    # Plain space-separated brands (e.g. "Acme Corp", "Global Tech")
-    for m in PLAIN_BRAND.finditer(response_text):
-        raw_matches.append((m.start(), m.end(), m.group(1)))
+    # ----- Step 2: Classify blocks and extract candidates -----
+    # A "recommendation block" is one that contains list items, bold names,
+    # linked names, or appears after a recommendation verb.
+    all_candidates: list[str] = []  # ordered list of candidate brand names
 
-    # Connector brands (e.g. "Johnson & Johnson", "Procter and Gamble")
-    # Guard: skip connector matches whose start falls inside a plain-brand
-    # span — these are fragments like "Corp and Global" from
-    # "Acme Corp and Global Tech", not real compound brands.
-    plain_spans = [(s, e) for s, e, _ in raw_matches]
-    for m in CONNECTOR_BRAND.finditer(response_text):
-        if not any(s <= m.start() < e for s, e in plain_spans):
-            raw_matches.append((m.start(), m.end(), m.group(1)))
+    for block in blocks:
+        block_candidates = _extract_brands_from_block(block)
+        all_candidates.extend(block_candidates)
 
-    # Sort by position in text to preserve order
-    raw_matches.sort(key=lambda x: x[0])
-    phrases = [p for _, _, p in raw_matches]
+    # Also scan for bold/linked brand names across the entire text
+    # (these can appear inline in prose too)
+    bold_brands = _extract_bold_linked_brands(response_text)
+    for b in bold_brands:
+        if b not in all_candidates:
+            all_candidates.append(b)
 
-    # ----- Step 2: filter false positives -----
+    # ----- Step 3: Filter false positives -----
     filtered: list[str] = []
-    for phrase in phrases:
-        if _is_plausible_brand(phrase):
+    for phrase in all_candidates:
+        if _is_plausible_brand(phrase) and _is_not_descriptive(phrase):
             filtered.append(phrase)
 
-    # ----- Step 3: deduplicate while preserving order -----
+    # ----- Step 4: Deduplicate while preserving order -----
     seen: set[str] = set()
     unique_brands: list[str] = []
     for phrase in filtered:
@@ -221,11 +229,8 @@ def extract_brand_mentions(
             seen.add(key)
             unique_brands.append(phrase)
 
-    # ----- Step 4: find target brand positions -----
-    # Extract target search tokens from the domain
+    # ----- Step 5: Find target brand positions -----
     target_tokens = _extract_target_tokens(target_domain)
-    # Add the on-page brand name as a target token if provided
-    # (e.g. "Winona" from title for bywinona.com)
     if target_brand_name and target_brand_name.lower() not in target_tokens:
         target_tokens.append(target_brand_name.lower())
     target_positions = _find_target_positions(filtered, target_tokens)
@@ -235,53 +240,183 @@ def extract_brand_mentions(
 
 # ---------------------------------------------------------------------------
 
-def brands_from_citations(citations: list[str]) -> list[str]:
-    """Convert citation domains to humanized brand names.
+# Regex for detecting numbered-list item prefixes like "1.", "2)", "1 -", etc.
+_LIST_ITEM_RE = re.compile(r"^\s*(?:\d+[.\)]\s*|[-*]\s+)(.+)", re.MULTILINE)
 
-    Examples:
-        ["winonahealth.com"] -> ["Winona Health"]
-        ["midihealth.com"] -> ["Midi Health"]
-        ["www.nobelprize.org"] -> ["Nobel Prize"]
+# Regex for bold markdown: **Brand Name** or __Brand Name__
+_BOLD_RE = re.compile(r"\*\*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\*\*")
 
-    This is the primary brand extraction path — it uses the actual cited
-    sources (URLs/domains) returned by each engine, not regex on text.
+# Regex for linked markdown: [Brand Name](url)
+_LINKED_RE = re.compile(r"\[([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\]\(")
+
+# Regex for connector brands in list items
+_LIST_CONNECTOR_RE = re.compile(
+    r"(?:\d+[.\)]\s*|[-*]\s+)"
+    r"([A-Z][a-z]+"
+    r"\s+(?i:&|and)\s+"
+    r"[A-Z][a-z]+"
+    r")"
+)
+
+# Descriptive phrases that are NOT brands — these are category descriptions,
+# treatment names, or structural labels commonly capitalized in AI responses.
+_DESCRIPTIVE_TERMS: set[str] = {
+    "hormone replacement therapy", "hormone therapy",
+    "telehealth platforms", "telehealth providers",
+    "online directories", "national provider directories",
+    "dedicated menopause telehealth", "dedicated menopause telehealth platforms",
+    "specialized telehealth platforms", "specialized telehealth",
+    "mental health", "primary care",
+    "blood pressure", "bone health",
+    "medical history", "medical professional",
+    "healthcare provider", "health care",
+    "clinical trials", "case studies",
+    "treatment options", "treatment plan",
+    "patient portal", "patient support",
+    "customer reviews", "customer support",
+    "free consultation", "initial consultation",
+    "board certified", "board-certified",
+    "insurance coverage", "prescription medication",
+    "active ingredients", "medical advice",
+    "emergency services", "emergency room",
+    "preventive care", "preventative care",
+    "wellness programs", "wellness centers",
+    "fitness programs", "nutrition plans",
+    "skin care", "hair care",
+    "weight loss", "weight management",
+    "menopause relief", "menopause symptoms",
+    "perimenopause symptoms",
+    "estrogen levels", "estrogen therapy",
+    "progesterone levels", "progesterone therapy",
+    "top picks", "top choices", "top options",
+    "best picks", "best choices", "best options",
+    "key features", "main benefits",
+    "pro tip", "quick tip",
+}
+
+# City names that get capitalized but aren't brands
+_GEO_NAMES: set[str] = {
+    "falls church", "new york", "los angeles", "san francisco",
+    "las vegas", "united states", "united kingdom", "south africa",
+    "north america", "european union", "middle east", "south east",
+    "washington dc", "washington d.c.",
+}
+
+
+def _extract_brands_from_block(block: str) -> list[str]:
+    """Extract candidate brand names from a single text block.
+
+    Detects brands in:
+    - Numbered/bulleted list items: "1. Midi Health - ..."
+    - Bold text: "**Midi Health** offers..."
+    - Linked text: "[Midi Health](https://...)"
+    - Connector brands in lists: "1. Johnson & Johnson - ..."
     """
+    candidates: list[str] = []
+    seen_lower: set[str] = set()
+
+    def _add(phrase: str):
+        if phrase and phrase.lower() not in seen_lower:
+            candidates.append(phrase)
+            seen_lower.add(phrase.lower())
+
+    # 1. List items: "1. Brand Name ..." or "- Brand Name ..."
+    for m in _LIST_ITEM_RE.finditer(block):
+        item_text = m.group(1).strip()
+        # Extract the first capitalized phrase from the list item
+        # (this is typically the brand name before the description)
+        brand_match = PLAIN_BRAND.match(item_text)
+        if brand_match:
+            _add(brand_match.group(1))
+        else:
+            # Try connector brand in list
+            conn_match = _LIST_CONNECTOR_RE.match(block[block.index(item_text)-3:])
+            if conn_match:
+                _add(conn_match.group(1))
+            # Single capitalized word as brand (e.g. "Winona")
+            elif re.match(r'^[A-Z][a-z]{2,}\b', item_text):
+                single = re.match(r'^([A-Z][a-z]{2,})\b', item_text)
+                if single:
+                    _add(single.group(1))
+
+    # 2. Bold brands in this block
+    for m in _BOLD_RE.finditer(block):
+        _add(m.group(1))
+
+    # 3. Linked brands in this block
+    for m in _LINKED_RE.finditer(block):
+        _add(m.group(1))
+
+    # 4. Plain brand regex (catches brands in any context within the block)
+    for m in PLAIN_BRAND.finditer(block):
+        _add(m.group(1))
+
+    # 5. Connector brands (Johnson & Johnson)
+    for m in CONNECTOR_BRAND.finditer(block):
+        _add(m.group(1))
+
+    return candidates
+
+
+def _extract_bold_linked_brands(text: str) -> list[str]:
+    """Extract brand names that appear in bold or as link text across the full response."""
     brands: list[str] = []
-    for url_or_domain in citations:
-        domain = _domain_from_url(url_or_domain)
-        if not domain:
-            continue
-        bare = domain.split(".")[0]
-        # Skip generic TLDs / www
-        if bare in ("www", "https", "http"):
-            continue
-        # Skip common non-brand domains
-        skip = {"google", "wikipedia", "youtube", "reddit", "amazon",
-                "facebook", "twitter", "x", "instagram", "linkedin",
-                "pinterest", "tiktok", "medium", "quora", "yahoo",
-                "bing", "duckduckgo", "yandex", "baidu"}
-        if bare.lower() in skip:
-            continue
-        # Humanize: split camelCase, hyphens
-        parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare)
-        parts = parts.replace("-", " ").replace("_", " ")
-        brand = " ".join(w.capitalize() for w in parts.split())
-        if len(brand) > 2 and brand.lower() not in {b.lower() for b in brands}:
-            brands.append(brand)
+    seen_lower: set[str] = set()
+
+    for m in _BOLD_RE.finditer(text):
+        phrase = m.group(1)
+        if phrase.lower() not in seen_lower:
+            brands.append(phrase)
+            seen_lower.add(phrase.lower())
+
+    for m in _LINKED_RE.finditer(text):
+        phrase = m.group(1)
+        if phrase.lower() not in seen_lower:
+            brands.append(phrase)
+            seen_lower.add(phrase.lower())
+
     return brands
 
 
-def _domain_from_url(url_or_domain: str) -> str:
-    """Extract bare domain from URL or domain string."""
-    from urllib.parse import urlparse
-    s = url_or_domain.strip().lower()
-    if s.startswith(("http://", "https://")):
-        host = urlparse(s).netloc
-    else:
-        host = s.split("/")[0]
-    if host.startswith("www."):
-        host = host[4:]
-    return host
+def _is_not_descriptive(phrase: str) -> bool:
+    """Return True if the phrase is NOT a descriptive term, category, or geo name.
+
+    This catches phrases that are capitalized in AI responses but are
+    descriptions/treatments rather than brand names:
+    - "Hormone Replacement Therapy" (treatment name)
+    - "Online Directories" (category)
+    - "Falls Church" (city)
+    """
+    phrase_lower = phrase.lower()
+
+    # Check descriptive terms
+    if phrase_lower in _DESCRIPTIVE_TERMS:
+        return False
+
+    # Check geo names
+    if phrase_lower in _GEO_NAMES:
+        return False
+
+    # Check if any descriptive term is a substring
+    for term in _DESCRIPTIVE_TERMS:
+        if phrase_lower == term or phrase_lower.startswith(term + " "):
+            return False
+
+    # Check if phrase contains common descriptive suffixes
+    # Note: "health", "care" are NOT included here because many real brand
+    # names end in these words (Midi Health, Everly Health, Hims & Hers).
+    descriptive_suffixes = [
+        "therapy", "treatment", "providers", "directories", "platforms",
+        "programs", "options", "solutions",
+        "medication", "relief", "symptoms",
+        "trials", "studies", "reviews", "support", "consultation",
+        "ingredients", "advice", "levels", "history",
+    ]
+    words = phrase_lower.split()
+    if len(words) >= 2 and words[-1] in descriptive_suffixes:
+        return False
+
+    return True
 
 
 # ---------------------------------------------------------------------------
