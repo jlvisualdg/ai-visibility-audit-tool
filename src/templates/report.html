@@ -1009,75 +1009,116 @@ body {
 {% endfor %}
 
 {# ====================================================================
-   SECTION 2 — VERDICT (3-takeaway format: Target Insights,
-   Top Brand Metrics, Audit Conclusions — NO recommendations)
+   SECTION 2 — THE DIAGNOSTIC (comprehensive good/weak analysis)
    ==================================================================== #}
-<section class="verdict">
-    <div class="verdict-title">Verdict</div>
-    <div class="verdict-takeaways">
+<section class="diagnostic">
+    <div class="diagnostic-label">The Diagnostic</div>
+    
+    {# Dynamic verdict based on actual data #}
+    <div class="diagnostic-summary">
+        {% if report.ai_coverage_pct == 0 %}
+            <p><strong>Zero AI Visibility:</strong> {{ report.domain }} is not being recommended by any AI engine across the tested keywords. This represents a critical gap in AI-powered discovery.</p>
+        {% elif report.ai_coverage_pct < 20 %}
+            <p><strong>Limited AI Presence:</strong> {{ report.domain }} has minimal visibility in AI recommendations, appearing in only {{ '%.0f' % report.ai_coverage_pct }}% of engine responses.</p>
+        {% elif report.ai_coverage_pct < 50 %}
+            <p><strong>Emerging AI Visibility:</strong> {{ report.domain }} is gaining traction with {{ '%.0f' % report.ai_coverage_pct }}% AI coverage, but significant opportunities remain.</p>
+        {% else %}
+            <p><strong>Strong AI Presence:</strong> {{ report.domain }} is well-positioned with {{ '%.0f' % report.ai_coverage_pct }}% AI coverage across engines.</p>
+        {% endif %}
+    </div>
 
-        {# Takeaway 1: Target Insights #}
-        <div class="verdict-takeaway">
-            <div class="verdict-takeaway-icon">🎯</div>
-            <div class="verdict-takeaway-label">Target Insights</div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric">{{ '%.0f' % report.ai_coverage_pct }}%</div>
-                <div class="verdict-takeaway-desc">AI coverage across {{ report.citation_matrix.engines|length }} engines</div>
-            </div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric small">{{ best_topic.name }}</div>
-                <div class="verdict-takeaway-desc">Best-performing topic ({{ best_topic.cov }}% coverage)</div>
-            </div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric small">{{ best_model.name }}</div>
-                <div class="verdict-takeaway-desc">Strongest AI engine presence ({{ best_model.cov }}%)</div>
-            </div>
+    <div class="diagnostic-grid">
+        {# Strengths #}
+        <div class="diagnostic-section">
+            <div class="diagnostic-section-title">Strengths</div>
+            <ul class="diagnostic-list">
+                {% if report.crawl_signals.answer_capsules > 5 %}
+                <li>✓ Strong answer-first content ({{ report.crawl_signals.answer_capsules }} capsules)</li>
+                {% endif %}
+                {% if report.crawl_signals.schema_pages > 3 %}
+                <li>✓ Good schema markup coverage ({{ report.crawl_signals.schema_pages }} pages)</li>
+                {% endif %}
+                {% if report.crawl_signals.authorship_pages > 3 %}
+                <li>✓ Authorship signals present ({{ report.crawl_signals.authorship_pages }} pages)</li>
+                {% endif %}
+                {% if report.crawl_signals.has_llms_txt %}
+                <li>✓ /llms.txt file present</li>
+                {% endif %}
+                {% if not report.crawl_signals.robots_blocks_ai %}
+                <li>✓ AI bots have access ({{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }})</li>
+                {% endif %}
+                {% if report.crawl_signals.avg_response_ms < 500 %}
+                <li>✓ Fast response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
+                {% endif %}
+                {% if report.crawl_signals.thin_pages|length == 0 %}
+                <li>✓ No thin content detected</li>
+                {% endif %}
+                {% set strength_count = ([report.crawl_signals.answer_capsules > 5, report.crawl_signals.schema_pages > 3, report.crawl_signals.authorship_pages > 3, report.crawl_signals.has_llms_txt, not report.crawl_signals.robots_blocks_ai, report.crawl_signals.avg_response_ms < 500, report.crawl_signals.thin_pages|length == 0]|select('equalto', true)|list)|length %}
+                {% if strength_count == 0 %}
+                <li class="muted">No significant strengths identified in current crawl signals</li>
+                {% endif %}
+            </ul>
         </div>
 
-        {# Takeaway 2: Top Brand Metrics #}
-        <div class="verdict-takeaway">
-            <div class="verdict-takeaway-icon">🏆</div>
-            <div class="verdict-takeaway-label">Top Brand Metrics</div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric small">{{ best_brand.name }}</div>
-                <div class="verdict-takeaway-desc">Most-cited brand across all queries</div>
-            </div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric">{{ total_citations.count }}</div>
-                <div class="verdict-takeaway-desc">Total cited sources across all topics</div>
-            </div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric">{{ report.fixable_gaps }}</div>
-                <div class="verdict-takeaway-desc">Fixable gaps identified</div>
-            </div>
+        {# Weaknesses #}
+        <div class="diagnostic-section">
+            <div class="diagnostic-section-title">Weak Points</div>
+            <ul class="diagnostic-list diagnostic-list-weak">
+                {% if report.ai_coverage_pct == 0 %}
+                <li>⚠ Zero AI coverage — not cited by any engine</li>
+                {% endif %}
+                {% if report.crawl_signals.answer_capsules == 0 %}
+                <li>⚠ No answer-first content detected</li>
+                {% endif %}
+                {% if report.crawl_signals.schema_pages == 0 %}
+                <li>⚠ Missing schema markup</li>
+                {% endif %}
+                {% if report.crawl_signals.authorship_pages == 0 %}
+                <li>⚠ No authorship signals</li>
+                {% endif %}
+                {% if not report.crawl_signals.has_llms_txt %}
+                <li>⚠ /llms.txt file missing</li>
+                {% endif %}
+                {% if report.crawl_signals.robots_blocks_ai %}
+                <li> AI bots blocked by robots.txt</li>
+                {% endif %}
+                {% if report.crawl_signals.avg_response_ms > 500 %}
+                <li>⚠ Slow response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
+                {% endif %}
+                {% if report.crawl_signals.thin_pages|length > 0 %}
+                <li> {{ report.crawl_signals.thin_pages|length }} thin pages detected</li>
+                {% endif %}
+                {% if report.crawl_signals.total_images_missing_alt > 0 %}
+                <li>⚠ {{ report.crawl_signals.total_images_missing_alt }} images missing alt text</li>
+                {% endif %}
+                {% set weakness_count = ([report.ai_coverage_pct == 0, report.crawl_signals.answer_capsules == 0, report.crawl_signals.schema_pages == 0, report.crawl_signals.authorship_pages == 0, not report.crawl_signals.has_llms_txt, report.crawl_signals.robots_blocks_ai, report.crawl_signals.avg_response_ms > 500, report.crawl_signals.thin_pages|length > 0, report.crawl_signals.total_images_missing_alt > 0]|select('equalto', true)|list)|length %}
+                {% if weakness_count == 0 %}
+                <li class="muted">No critical weaknesses identified</li>
+                {% endif %}
+            </ul>
         </div>
 
-        {# Takeaway 3: Audit Conclusions (no recommendations) #}
-        <div class="verdict-takeaway">
-            <div class="verdict-takeaway-icon">📋</div>
-            <div class="verdict-takeaway-label">Audit Conclusions</div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-metric">{{ report.crawl_signals.health_score }}/100</div>
-                <div class="verdict-takeaway-desc">AI Indexability Health Score</div>
+        {# Key Metrics #}
+        <div class="diagnostic-metrics">
+            <div class="metric-card">
+                <div class="metric-value">{{ '%.0f' % report.ai_coverage_pct }}%</div>
+                <div class="metric-label">AI Coverage</div>
             </div>
-
-            <div class="verdict-takeaway-item">
-                <div class="verdict-takeaway-text">
-                    <strong>{{ report.strategic_read.title }}</strong><br>
-                    {{ report.strategic_read.summary|truncate(120) }}
-                </div>
+            <div class="metric-card">
+                <div class="metric-value">{{ report.crawl_signals.health_score }}/100</div>
+                <div class="metric-label">Indexability Score</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{{ report.fixable_gaps }}</div>
+                <div class="metric-label">Fixable Gaps</div>
             </div>
         </div>
-
     </div>
 </section>
+
+{# ====================================================================
+   OLD VERDICT — removed, replaced by diagnostic above
+   ==================================================================== #}
 
 
 
@@ -1155,7 +1196,7 @@ body {
     <div class="top-brands">
         {% for domain, count in report.citation_matrix.all_competitors.items() %}
             {% if loop.index <= 3 %}
-            <div class="top-brand-item">
+            <div class="top-brand-item {{ 'top-brand-first' if loop.index == 1 else '' }}">
                 <div class="top-brand-rank">{{ loop.index }}</div>
                 <div class="top-brand-info">
                     <div class="top-brand-name">{{ domain }}</div>
