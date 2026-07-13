@@ -241,22 +241,20 @@ body {
 }
 
 /* ==================================================================
-   SECTION 2 — VERDICT (3-takeaway format:
-     Target Insights · Top Brand Metrics · Audit Conclusions)
-   NO recommendations — pure diagnostic summary.
+   SECTION 2 — THE DIAGNOSTIC (dark themed card)
    ================================================================== */
-.verdict {
-    margin-bottom: 48px;
-    padding: 36px 32px;
-    background: var(--surface-card);
-    border: 1px solid var(--border-subtle);
+.diagnostic {
+    background: var(--blue-900);
     border-radius: var(--radius-lg);
+    padding: 36px 32px;
+    margin-bottom: 48px;
+    color: #ffffff;
     position: relative;
     overflow: hidden;
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-md);
 }
 
-.verdict::before {
+.diagnostic::before {
     content: "";
     position: absolute;
     top: 0; left: 0; right: 0;
@@ -264,112 +262,98 @@ body {
     background: var(--gradient-brand);
 }
 
-.verdict-title {
-    font-family: var(--font-display);
-    font-size: 14px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--brand-primary);
-    margin-bottom: 28px;
-}
-
-.verdict-takeaways {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 24px;
-}
-
-.verdict-takeaway {
-    background: var(--surface-subtle);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-md);
-    padding: 24px;
-}
-
-.verdict-takeaway-icon {
-    font-size: 24px;
-    margin-bottom: 12px;
-}
-
-.verdict-takeaway-label {
+.diagnostic-label {
     font-family: var(--font-display);
     font-size: 11px;
     font-weight: 600;
-    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.8px;
+    letter-spacing: 1.2px;
+    color: var(--brand-accent);
     margin-bottom: 16px;
 }
 
-.verdict-takeaway-item {
-    margin-bottom: 12px;
-}
-
-.verdict-takeaway-item:last-child { margin-bottom: 0; }
-
-.verdict-takeaway-metric {
-    font-family: var(--font-display);
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--brand-primary);
-    line-height: 1.3;
-}
-
-.verdict-takeaway-metric.small { font-size: 16px; }
-
-.verdict-takeaway-desc {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 2px;
-}
-
-.verdict-takeaway-text {
-    font-size: 14px;
-    color: var(--text-body);
-    line-height: 1.6;
-}
-
-.verdict-takeaway-text strong {
-    color: var(--text-strong);
-}
-
-/* ==================================================================
-   STRATEGIC READ (between Verdict and Matrix)
-   ================================================================== */
-.strategic {
-    background: var(--brand-tint);
-    border: 1px solid var(--blue-200);
-    border-left: 4px solid var(--brand-primary);
-    border-radius: var(--radius-lg);
-    padding: 28px 32px;
-    margin-bottom: 48px;
-}
-
-.strategic-label {
-    font-family: var(--font-display);
-    color: var(--brand-primary);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    margin-bottom: 8px;
-    font-weight: 600;
-}
-
-.strategic-title {
-    font-family: var(--font-display);
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--text-strong);
-    margin-bottom: 12px;
-    line-height: 1.3;
-}
-
-.strategic-summary {
-    color: var(--text-body);
-    margin-bottom: 0;
+.diagnostic-summary p {
     font-size: 15px;
     line-height: 1.6;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 24px;
+}
+
+.diagnostic-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 24px;
+    align-items: start;
+}
+
+.diagnostic-section {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-md);
+    padding: 20px;
+}
+
+.diagnostic-section-title {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffffff;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+.diagnostic-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.diagnostic-list li {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+    padding: 4px 0;
+    line-height: 1.5;
+}
+
+.diagnostic-list li.muted {
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
+
+.diagnostic-metrics {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 140px;
+}
+
+.diagnostic-metrics .metric-card {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    padding: 16px;
+    text-align: center;
+}
+
+.diagnostic-metrics .metric-value {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--brand-accent);
+    line-height: 1.2;
+}
+
+.diagnostic-metrics .metric-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+@media (max-width: 768px) {
+    .diagnostic-grid { grid-template-columns: 1fr; }
 }
 
 /* ==================================================================
@@ -544,19 +528,45 @@ body {
     box-shadow: var(--shadow-sm);
 }
 
-/* #1 brand highlighted in greenish tones */
+/* #1 brand — dominant brand blue, larger size */
 .top-brand-item.top-brand-first {
-    border-color: var(--success-500);
-    background: var(--success-50);
+    border-color: var(--brand-primary);
+    background: var(--brand-tint);
+    box-shadow: var(--shadow-brand-sm);
+    transform: scale(1);
 }
 
 .top-brand-item.top-brand-first .top-brand-rank {
-    background: var(--success-500);
-    color: var(--text-on-brand);
+    background: var(--brand-primary);
+    box-shadow: var(--shadow-brand-md);
 }
 
 .top-brand-item.top-brand-first .top-brand-name {
+    font-size: 18px;
     font-weight: 700;
+    color: var(--brand-deep);
+}
+
+.top-brand-item.top-brand-first .top-brand-citations {
+    font-size: 13px;
+    color: var(--brand-primary);
+    font-weight: 600;
+}
+
+/* #2 and #3 — 70% size of #1 */
+.top-brand-item:not(.top-brand-first) {
+    transform: scale(0.7);
+    transform-origin: center left;
+    opacity: 0.85;
+}
+
+.top-brand-item:not(.top-brand-first) .top-brand-name {
+    font-size: 13px;
+}
+
+.top-brand-item:not(.top-brand-first) .top-brand-rank {
+    width: 28px; height: 28px;
+    font-size: 11px;
 }
 
 .top-brand-rank {
@@ -595,6 +605,79 @@ body {
 /* ==================================================================
    SECTION 5 — COMPETITIVE LANDSCAPE (6 columns)
    ================================================================== */
+/* Dark themed indexability section */
+.indexability-section {
+    background: var(--blue-900);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    margin-bottom: 48px;
+    box-shadow: var(--shadow-md);
+}
+
+.indexability-section .section-header {
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.indexability-section .section-title {
+    color: #ffffff;
+}
+
+.indexability-section .section-subtitle {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.indexability-section .section-header-icon {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.indexability-section .signal-grid {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-md);
+    padding: 20px;
+}
+
+.indexability-section .signal-card {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.indexability-section .signal-label {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.indexability-section .signal-value {
+    color: #ffffff;
+}
+
+.indexability-section .health-score-hero {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.indexability-section .health-score-hero .signal-value {
+    color: var(--brand-accent);
+}
+
+.indexability-section .issues-scope {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    margin-top: 20px;
+}
+
+.indexability-section .issues-heading {
+    color: #ffffff;
+}
+
+.indexability-section .issue-text {
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.indexability-section .signal-status-ok { color: var(--success-500) !important; }
+.indexability-section .signal-status-warn { color: var(--warning-500) !important; }
+.indexability-section .signal-status-bad { color: var(--danger-500) !important; }
+
 .landscape-wrapper {
     overflow-x: auto;
     border-radius: var(--radius-md);
@@ -1250,7 +1333,7 @@ body {
                     <th>Result</th>
                     <th>Brand Mentions</th>
                     <th>URL Citations</th>
-                    <th>1st Mention</th>
+                    <th>Brand Position</th>
                     <th>Top Competitor</th>
                 </tr>
             </thead>
@@ -1279,9 +1362,55 @@ body {
 {% endif %}
 
 {# ====================================================================
-   SECTION 6 — AI INDEXABILITY AUDIT (signal cards + issues list)
+   SECTION 5b — TOPICS TO OPTIMIZE (moved here, after competitive landscape)
    ==================================================================== #}
-<section class="section">
+{% if report.buyer_topics %}
+{% set zero_topics = [] %}
+{% for topic in report.buyer_topics %}
+    {% set topic_results = report.citation_matrix.results|selectattr('topic', 'equalto', topic)|list %}
+    {% set topic_covered = topic_results|selectattr('covered')|list|length %}
+    {% if topic_covered == 0 and topic_results|length > 0 %}
+        {% set _ = zero_topics.append(topic) %}
+    {% endif %}
+{% endfor %}
+
+{% if zero_topics|length > 0 %}
+<section class="section topics-section">
+    <div class="section-header">
+        <div class="section-header-icon">🎯</div>
+        <div class="section-header-content">
+            <h2 class="section-title">Topics to Optimize</h2>
+            <p class="section-subtitle">Buyer topics with zero AI search presence — prioritize these first</p>
+        </div>
+    </div>
+
+    {% set show_count = [3, zero_topics|length]|min %}
+    <div class="topics-list">
+        {% for topic in zero_topics[:show_count] %}
+            <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
+        {% endfor %}
+    </div>
+
+    {% if zero_topics|length > show_count %}
+    <button class="dropdown-toggle-btn" id="zeroTopicsToggle" onclick="toggleZeroTopics()">
+        <span>Show {{ zero_topics|length - show_count }} more</span>
+        <span class="arrow">▼</span>
+    </button>
+
+    <div class="zero-presence-topics" id="zeroTopicsDropdown">
+        {% for topic in zero_topics[show_count:] %}
+            <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
+{% endif %}
+{% endif %}
+
+{# ====================================================================
+   SECTION 6 — AI INDEXABILITY AUDIT (dark themed)
+   ==================================================================== #}
+<section class="section indexability-section">
     <div class="section-header">
         <div class="section-header-icon">🤖</div>
         <div class="section-header-content">
@@ -1450,52 +1579,7 @@ body {
     {% endif %}
 </section>
 
-{# ====================================================================
-   SECTION 7 — TOPICS TO OPTIMIZE (zero-presence only:
-    3 visible chips + rest hidden behind dropdown)
-   ==================================================================== #}
-{% if report.buyer_topics %}
-{% set zero_topics = [] %}
-{% for topic in report.buyer_topics %}
-    {% set topic_results = report.citation_matrix.results|selectattr('topic', 'equalto', topic)|list %}
-    {% set topic_covered = topic_results|selectattr('covered')|list|length %}
-    {% if topic_covered == 0 and topic_results|length > 0 %}
-        {% set _ = zero_topics.append(topic) %}
-    {% endif %}
-{% endfor %}
-
-{% if zero_topics|length > 0 %}
-<section class="section topics-section">
-    <div class="section-header">
-        <div class="section-header-icon">🎯</div>
-        <div class="section-header-content">
-            <h2 class="section-title">Topics to Optimize</h2>
-            <p class="section-subtitle">Buyer topics with zero AI search presence — prioritize these first</p>
-        </div>
-    </div>
-
-    {% set show_count = [3, zero_topics|length]|min %}
-    <div class="topics-list">
-        {% for topic in zero_topics[:show_count] %}
-            <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
-        {% endfor %}
-    </div>
-
-    {% if zero_topics|length > show_count %}
-    <button class="dropdown-toggle-btn" id="zeroTopicsToggle" onclick="toggleZeroTopics()">
-        <span>Show {{ zero_topics|length - show_count }} more</span>
-        <span class="arrow">▼</span>
-    </button>
-
-    <div class="zero-presence-topics" id="zeroTopicsDropdown">
-        {% for topic in zero_topics[show_count:] %}
-            <span class="topic-chip zero-presence" title="Zero AI presence detected">{{ topic }} ⚠</span>
-        {% endfor %}
-    </div>
-    {% endif %}
-</section>
-{% endif %}
-{% endif %}
+{# Old Topics section removed — moved above after Competitive Landscape #}
 
 {# ====================================================================
    SECTION 8 — FOOTER CTA
