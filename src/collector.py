@@ -156,6 +156,7 @@ def execute_all(
                 "brand_mentions": brand_mentions,
                 "positions": positions,
                 "target_mention_count": len(positions),
+                "cost_usd": raw.get("cost_usd", 0.0),
             })
 
             # Sleep between calls to avoid hammering APIs
