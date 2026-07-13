@@ -221,8 +221,55 @@ def _build_citation_matrix_from_results(
         # Total brand recommendations in this response (all brands, not just target)
         total_brand_recommendations = len(brand_mentions)
 
-        # Total URL citations in this response (all sources, not just target)
-        total_url_citations = len(citations)
+        # URL citations for target + identified competitor brands only.
+        # A citation counts if its domain matches the target domain OR any
+        # competitor brand name in the response. Generic sources (wikipedia,
+        # google, etc.) are excluded.
+        _GENERIC_DOMAINS = {
+            "google.com", "wikipedia.org", "youtube.com", "reddit.com",
+            "amazon.com", "facebook.com", "twitter.com", "x.com",
+            "instagram.com", "linkedin.com", "pinterest.com", "tiktok.com",
+            "medium.com", "quora.com", "yahoo.com", "bing.com",
+            "duckduckgo.com", "yandex.com", "baidu.com", "webmd.com",
+            "mayoclinic.org", "healthline.com", "medlineplus.gov",
+            "nih.gov", "cdc.gov", "fda.gov", "medscape.com",
+            "verywellhealth.com", "clevelandclinic.org", "hopkinsmedicine.org",
+        }
+
+        def _is_brand_citation(cite_url: str) -> bool:
+            """Check if citation domain matches target or any competitor brand."""
+            cite_lower = cite_url.lower().strip()
+            # Strip www.
+            if cite_lower.startswith("www."):
+                cite_lower = cite_lower[4:]
+            # Strip protocol
+            for proto in ("https://", "http://"):
+                if cite_lower.startswith(proto):
+                    cite_lower = cite_lower[len(proto):]
+            cite_bare = cite_lower.split("/")[0].split(".")[0]
+
+            # Check if it's a generic domain
+            if cite_lower in _GENERIC_DOMAINS or cite_bare in {"google", "wikipedia", "youtube"}:
+                return False
+
+            # Check if it matches target domain
+            if _domain_contains_citation(cite_url, domain):
+                return True
+
+            # Check if it matches any competitor brand name
+            for b in brand_mentions:
+                if _is_target_brand(b, target_tokens):
+                    continue
+                brand_lower = b.lower().replace(" ", "").replace("-", "")
+                if brand_lower in cite_bare.replace(" ", "").replace("-", ""):
+                    return True
+                # Also check if bare domain starts with brand
+                if cite_bare.startswith(brand_lower) and len(brand_lower) >= 4:
+                    return True
+
+            return False
+
+        brand_url_citations = sum(1 for c in citations if _is_brand_citation(c))
 
         # Position of the top brand in the recommendation list
         top_brand_position = None
@@ -246,7 +293,7 @@ def _build_citation_matrix_from_results(
             cited_sources=citations,
             passes=[],
             best_brand_mentions=total_brand_recommendations,
-            best_url_citations=total_url_citations,
+            best_url_citations=brand_url_citations,
             best_first_section=avg_position,
             top_competitor=top_competitor,
         )
