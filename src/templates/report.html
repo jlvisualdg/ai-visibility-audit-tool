@@ -97,6 +97,12 @@
     --brand-deep:          var(--blue-700);
     --brand-tint:          var(--blue-50);
     --brand-soft:          var(--blue-100);
+    --brand-accent:        var(--blue-500);
+
+    /* ---- Engine platform colors ---- */
+    --engine-perplexity: #7c3aed;
+    --engine-chatgpt:    #10a37f;
+    --engine-gemini:     #4285f4;
 
     --gradient-brand:      linear-gradient(135deg, var(--blue-400) 0%, var(--blue-600) 100%);
     --gradient-hero:       linear-gradient(180deg, rgba(47,149,208,0.06) 0%, rgba(47,149,208,0) 100%);
@@ -263,13 +269,27 @@ body {
 
 .diagnostic-label {
     font-family: var(--font-display);
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--brand-accent);
-    margin-bottom: 16px;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.45);
+    margin-bottom: 4px;
 }
+
+.diagnostic-conclusion {
+    font-family: var(--font-display);
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+    margin-bottom: 24px;
+    text-transform: uppercase;
+}
+.diagnostic-conclusion.score--strong   { color: #4ade80; }
+.diagnostic-conclusion.score--emerging { color: #facc15; }
+.diagnostic-conclusion.score--limited  { color: #fb923c; }
+.diagnostic-conclusion.score--critical { color: #f87171; }
 
 /* AEO Score hero */
 .aeo-score-hero {
@@ -425,49 +445,84 @@ body {
 
 .diagnostic-list li {
     font-size: 13px;
-    color: rgba(255, 255, 255, 0.8);
-    padding: 4px 0;
+    color: rgba(255, 255, 255, 0.75);
+    padding: 5px 0 5px 20px;
     line-height: 1.5;
+    position: relative;
 }
-
+.diagnostic-list li::before {
+    content: '–';
+    position: absolute;
+    left: 0;
+    color: rgba(255,255,255,0.3);
+}
+.diagnostic-list li.strength {
+    color: #4ade80;
+}
+.diagnostic-list li.strength::before {
+    content: '✓';
+    color: #4ade80;
+}
+.diagnostic-list li.weakness {
+    color: #f87171;
+}
+.diagnostic-list li.weakness::before {
+    content: '⚠';
+    color: #f87171;
+}
 .diagnostic-list li.muted {
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.35);
     font-style: italic;
 }
 
+/* Key metrics row — full width under the grid */
 .diagnostic-metrics {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-width: 140px;
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 8px;
 }
 
 .diagnostic-metrics .metric-card {
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--radius-sm);
-    padding: 16px;
-    text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-md);
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .diagnostic-metrics .metric-value {
     font-family: var(--font-display);
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--brand-accent);
-    line-height: 1.2;
+    font-size: 32px;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1;
 }
+
+.diagnostic-metrics .metric-value.metric-positive { color: #4ade80; }
+.diagnostic-metrics .metric-value.metric-warning  { color: #facc15; }
+.diagnostic-metrics .metric-value.metric-zero     { color: #f87171; }
 
 .diagnostic-metrics .metric-label {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.5);
-    margin-top: 4px;
+    color: rgba(255, 255, 255, 0.45);
     text-transform: uppercase;
-    letter-spacing: 0.4px;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+}
+
+.diagnostic-metrics .metric-sub {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    margin-top: 2px;
 }
 
 @media (max-width: 768px) {
     .diagnostic-grid { grid-template-columns: 1fr; }
+    .diagnostic-metrics { grid-template-columns: 1fr; }
 }
 
 /* ==================================================================
@@ -523,13 +578,19 @@ body {
 
 .engine-note strong { color: var(--text-strong); }
 
-.engine-note .legend-inline { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
+.engine-note .legend-inline {
+    display: inline-flex;
+    gap: 14px;
+    align-items: center;
+    margin-left: 12px;
+    flex-wrap: wrap;
+}
 
-.engine-note .legend-inline span { font-size: 11px; }
+.engine-note .legend-inline span { font-size: 11px; vertical-align: middle; }
 
-.legend-green { color: var(--success-500); }
+.legend-green  { color: var(--success-500); }
 .legend-yellow { color: var(--warning-500); }
-.legend-red { color: var(--danger-500); }
+.legend-red    { color: var(--danger-500); }
 
 /* Matrix table */
 .matrix-wrapper {
@@ -581,18 +642,46 @@ body {
 .matrix-table tbody tr:hover { background: var(--surface-subtle); }
 
 .matrix-cell-covered {
-    color: var(--success-500);
     font-weight: 600;
+    font-size: 12px;
+}
+
+.matrix-cell-brand {
+    display: inline-block;
+    background: rgba(47,163,106,0.15);
+    color: #4ade80;
+    border: 1px solid rgba(74,222,128,0.3);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 4px;
+}
+
+.matrix-cell-pos {
+    color: rgba(255,255,255,0.5);
+    font-size: 11px;
+    font-weight: 400;
 }
 
 .matrix-cell-total {
     font-weight: 400;
     font-size: 11px;
-    opacity: 0.55;
+    opacity: 0.45;
 }
 
 .matrix-cell-missed {
-    color: var(--danger-500);
+    color: rgba(248,113,113,0.8);
+    font-size: 12px;
+}
+
+.matrix-cell-missed-inner {
+    display: inline-block;
+    background: rgba(248,113,113,0.08);
+    border: 1px solid rgba(248,113,113,0.25);
+    border-radius: 4px;
+    padding: 1px 8px;
+    font-size: 11px;
 }
 
 .matrix-cell-partial {
@@ -623,24 +712,20 @@ body {
    SECTION 4 — TOP RECOMMENDED BRANDS (top 3)
    ================================================================== */
 .top-brands {
-    display: flex;
-    align-items: flex-end;
-    gap: 20px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
 }
 
 .top-brand-item {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
-    text-align: center;
-    gap: 10px;
+    gap: 14px;
     background: var(--surface-card);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    padding: 20px 24px;
-    flex: 1;
-    min-width: 200px;
+    padding: 20px;
     box-shadow: var(--shadow-xs);
     transition: box-shadow var(--ease-standard) 220ms, border-color var(--ease-standard) 220ms;
 }
@@ -650,68 +735,35 @@ body {
     box-shadow: var(--shadow-sm);
 }
 
-/* #1 brand — dominant brand blue, larger size */
 .top-brand-item.top-brand-first {
     border-color: var(--brand-primary);
+    border-width: 2px;
     background: var(--brand-tint);
-    box-shadow: var(--shadow-brand-sm);
-    transform: scale(1);
-}
-
-.top-brand-item.top-brand-first .top-brand-rank {
-    background: var(--brand-primary);
-    box-shadow: var(--shadow-brand-md);
-}
-
-.top-brand-item.top-brand-first .top-brand-name {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--brand-deep);
-}
-
-.top-brand-item.top-brand-first .top-brand-citations {
-    font-size: 13px;
-    color: var(--brand-primary);
-    font-weight: 600;
-}
-
-/* #2 and #3 — 70% size of #1 */
-.top-brand-item:not(.top-brand-first) {
-    transform: scale(0.7);
-    transform-origin: center left;
-    opacity: 0.85;
-}
-
-.top-brand-item:not(.top-brand-first) .top-brand-name {
-    font-size: 13px;
-}
-
-.top-brand-item:not(.top-brand-first) .top-brand-rank {
-    width: 28px; height: 28px;
-    font-size: 11px;
 }
 
 .top-brand-rank {
-    width: 36px; height: 36px;
+    width: 40px; height: 40px;
     border-radius: 50%;
     background: var(--gradient-brand);
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-display);
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--text-on-brand);
+    font-size: 16px;
+    font-weight: 800;
+    color: #fff;
     flex-shrink: 0;
-    box-shadow: var(--shadow-brand-md);
 }
 
-.top-brand-info { text-align: center; }
+.top-brand-item:nth-child(2) .top-brand-rank { background: linear-gradient(135deg,#6b7a8c,#4d5a68); }
+.top-brand-item:nth-child(3) .top-brand-rank { background: linear-gradient(135deg,#9aa7b6,#6b7a8c); }
+
+.top-brand-info { flex: 1; min-width: 0; }
 
 .top-brand-name {
     font-family: var(--font-display);
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--text-strong);
     white-space: nowrap;
     overflow: hidden;
@@ -721,7 +773,17 @@ body {
 .top-brand-citations {
     font-size: 12px;
     color: var(--text-muted);
-    margin-top: 2px;
+    margin-top: 3px;
+}
+
+.top-brand-item.top-brand-first .top-brand-name {
+    color: var(--brand-deep);
+    font-size: 16px;
+}
+
+.top-brand-item.top-brand-first .top-brand-citations {
+    color: var(--brand-primary);
+    font-weight: 600;
 }
 
 /* ==================================================================
@@ -902,6 +964,26 @@ body {
 
 .landscape-table tbody tr:hover { background: var(--surface-subtle); }
 
+/* Engine row accent stripe */
+.landscape-table tbody td.engine-cell {
+    padding-left: 10px;
+    border-left: 3px solid transparent;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.row-perplexity td.engine-cell { border-left-color: var(--engine-perplexity); color: var(--engine-perplexity); }
+.row-chatgpt    td.engine-cell { border-left-color: var(--engine-chatgpt);    color: var(--engine-chatgpt); }
+.row-gemini     td.engine-cell { border-left-color: var(--engine-gemini);     color: var(--engine-gemini); }
+.row-perplexity { background: rgba(124,58,237,0.03); }
+.row-chatgpt    { background: rgba(16,163,127,0.03); }
+.row-gemini     { background: rgba(66,133,244,0.03); }
+.row-perplexity:hover { background: rgba(124,58,237,0.07); }
+.row-chatgpt:hover    { background: rgba(16,163,127,0.07); }
+.row-gemini:hover     { background: rgba(66,133,244,0.07); }
+
 .hit-badge {
     display: inline-block;
     background: var(--success-50);
@@ -927,9 +1009,12 @@ body {
    ================================================================== */
 .signal-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(4, 1fr);
     gap: 16px;
 }
+
+@media (max-width: 900px) { .signal-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .signal-grid { grid-template-columns: 1fr; } }
 
 .signal-card {
     background: var(--surface-card);
@@ -958,6 +1043,15 @@ body {
     margin-bottom: 4px;
     line-height: 1.2;
 }
+
+.signal-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    margin-top: 4px;
+    opacity: 0.75;
+}
+.indexability-section .signal-desc { color: rgba(255,255,255,0.35); }
 
 .signal-label {
     font-size: 11px;
@@ -1316,6 +1410,7 @@ body {
    ==================================================================== #}
 <section class="diagnostic">
     <div class="diagnostic-label">The Diagnostic</div>
+    <div class="diagnostic-conclusion {{ aeo_color_class }}">{{ aeo_label }} AEO Score</div>
 
     {# AEO Score hero — composite score computed in Python (aeo_score.py) #}
     <div class="aeo-score-hero">
@@ -1329,7 +1424,7 @@ body {
         <div class="aeo-sub-scores">
             <div class="sub-score-row">
                 <div class="sub-score-header">
-                    <span class="sub-score-name">Visibility <span class="sub-score-weight">45%</span></span>
+                    <span class="sub-score-name">Visibility <span class="sub-score-weight">45% of score</span></span>
                     <span class="sub-score-value">{{ '%.0f'|format(visibility_score) }}</span>
                 </div>
                 <div class="sub-score-track">
@@ -1338,7 +1433,7 @@ body {
             </div>
             <div class="sub-score-row">
                 <div class="sub-score-header">
-                    <span class="sub-score-name">Citations <span class="sub-score-weight">30%</span></span>
+                    <span class="sub-score-name">Citations <span class="sub-score-weight">30% of score</span></span>
                     <span class="sub-score-value">{{ '%.0f'|format(citation_score) }}</span>
                 </div>
                 <div class="sub-score-track">
@@ -1347,7 +1442,7 @@ body {
             </div>
             <div class="sub-score-row">
                 <div class="sub-score-header">
-                    <span class="sub-score-name">Indexability <span class="sub-score-weight">25%</span></span>
+                    <span class="sub-score-name">Indexability <span class="sub-score-weight">25% of score</span></span>
                     <span class="sub-score-value">{{ '%.0f'|format(indexability_score) }}</span>
                 </div>
                 <div class="sub-score-track">
@@ -1376,25 +1471,25 @@ body {
             <div class="diagnostic-section-title">Strengths</div>
             <ul class="diagnostic-list">
                 {% if report.crawl_signals.answer_capsules > 5 %}
-                <li>✓ Strong answer-first content ({{ report.crawl_signals.answer_capsules }} capsules)</li>
+                <li class="strength">Strong answer-first content ({{ report.crawl_signals.answer_capsules }} capsules)</li>
                 {% endif %}
                 {% if report.crawl_signals.schema_pages > 3 %}
-                <li>✓ Good schema markup coverage ({{ report.crawl_signals.schema_pages }} pages)</li>
+                <li class="strength">Good schema markup coverage ({{ report.crawl_signals.schema_pages }} pages)</li>
                 {% endif %}
                 {% if report.crawl_signals.authorship_pages > 3 %}
-                <li>✓ Authorship signals present ({{ report.crawl_signals.authorship_pages }} pages)</li>
+                <li class="strength">Authorship signals present ({{ report.crawl_signals.authorship_pages }} pages)</li>
                 {% endif %}
                 {% if report.crawl_signals.has_llms_txt %}
-                <li>✓ /llms.txt file present</li>
+                <li class="strength">/llms.txt file present</li>
                 {% endif %}
                 {% if not report.crawl_signals.robots_blocks_ai %}
-                <li>✓ AI bots have access ({{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }})</li>
+                <li class="strength">AI bots have access ({{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }})</li>
                 {% endif %}
                 {% if report.crawl_signals.avg_response_ms < 500 %}
-                <li>✓ Fast response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
+                <li class="strength">Fast response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
                 {% endif %}
                 {% if report.crawl_signals.thin_pages|length == 0 %}
-                <li>✓ No thin content detected</li>
+                <li class="strength">No thin content detected</li>
                 {% endif %}
                 {% set strength_count = ([report.crawl_signals.answer_capsules > 5, report.crawl_signals.schema_pages > 3, report.crawl_signals.authorship_pages > 3, report.crawl_signals.has_llms_txt, not report.crawl_signals.robots_blocks_ai, report.crawl_signals.avg_response_ms < 500, report.crawl_signals.thin_pages|length == 0]|select('equalto', true)|list)|length %}
                 {% if strength_count == 0 %}
@@ -1406,33 +1501,33 @@ body {
         {# Weaknesses #}
         <div class="diagnostic-section">
             <div class="diagnostic-section-title">Weak Points</div>
-            <ul class="diagnostic-list diagnostic-list-weak">
+            <ul class="diagnostic-list">
                 {% if report.ai_coverage_pct == 0 %}
-                <li>⚠ Zero AI coverage — not cited by any engine</li>
+                <li class="weakness">Zero AI coverage — not cited by any engine</li>
                 {% endif %}
                 {% if report.crawl_signals.answer_capsules == 0 %}
-                <li>⚠ No answer-first content detected</li>
+                <li class="weakness">No answer-first content detected</li>
                 {% endif %}
                 {% if report.crawl_signals.schema_pages == 0 %}
-                <li>⚠ Missing schema markup</li>
+                <li class="weakness">Missing schema markup</li>
                 {% endif %}
                 {% if report.crawl_signals.authorship_pages == 0 %}
-                <li>⚠ No authorship signals</li>
+                <li class="weakness">No authorship signals</li>
                 {% endif %}
                 {% if not report.crawl_signals.has_llms_txt %}
-                <li>⚠ /llms.txt file missing</li>
+                <li class="weakness">/llms.txt file missing</li>
                 {% endif %}
                 {% if report.crawl_signals.robots_blocks_ai %}
-                <li> AI bots blocked by robots.txt</li>
+                <li class="weakness">AI bots blocked by robots.txt</li>
                 {% endif %}
                 {% if report.crawl_signals.avg_response_ms > 500 %}
-                <li>⚠ Slow response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
+                <li class="weakness">Slow response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
                 {% endif %}
                 {% if report.crawl_signals.thin_pages|length > 0 %}
-                <li> {{ report.crawl_signals.thin_pages|length }} thin pages detected</li>
+                <li class="weakness">{{ report.crawl_signals.thin_pages|length }} thin pages detected</li>
                 {% endif %}
                 {% if report.crawl_signals.total_images_missing_alt > 0 %}
-                <li>⚠ {{ report.crawl_signals.total_images_missing_alt }} images missing alt text</li>
+                <li class="weakness">{{ report.crawl_signals.total_images_missing_alt }} images missing alt text</li>
                 {% endif %}
                 {% set weakness_count = ([report.ai_coverage_pct == 0, report.crawl_signals.answer_capsules == 0, report.crawl_signals.schema_pages == 0, report.crawl_signals.authorship_pages == 0, not report.crawl_signals.has_llms_txt, report.crawl_signals.robots_blocks_ai, report.crawl_signals.avg_response_ms > 500, report.crawl_signals.thin_pages|length > 0, report.crawl_signals.total_images_missing_alt > 0]|select('equalto', true)|list)|length %}
                 {% if weakness_count == 0 %}
@@ -1441,19 +1536,25 @@ body {
             </ul>
         </div>
 
-        {# Key Metrics #}
+        {# Key Metrics — full-width row below the two columns #}
+        {% set owned_topics = competitive_data|selectattr('engines_covered', '>', 0)|list|length %}
+        {% set total_topics = competitive_data|length %}
+        {% set ownership_pct = ((owned_topics / total_topics * 100)|round|int) if total_topics > 0 else 0 %}
         <div class="diagnostic-metrics">
             <div class="metric-card">
-                <div class="metric-value">{{ '%.0f' % report.ai_coverage_pct }}%</div>
-                <div class="metric-label">AI Presence</div>
+                <div class="metric-value {% if report.ai_coverage_pct >= 50 %}metric-positive{% elif report.ai_coverage_pct >= 25 %}metric-warning{% else %}metric-zero{% endif %}">{{ '%.0f' % report.ai_coverage_pct }}%</div>
+                <div class="metric-label">AI Visibility Score</div>
+                <div class="metric-sub">Brand mentioned across all engine × query cells</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value">{{ report.crawl_signals.health_score }}/100</div>
+                <div class="metric-value {% if report.crawl_signals.health_score >= 70 %}metric-positive{% elif report.crawl_signals.health_score >= 40 %}metric-warning{% else %}metric-zero{% endif %}">{{ report.crawl_signals.health_score }}<span style="font-size:18px;font-weight:400;opacity:0.4">/100</span></div>
                 <div class="metric-label">Indexability Score</div>
+                <div class="metric-sub">Technical readiness for AI engine crawling</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value">{{ report.fixable_gaps }}</div>
+                <div class="metric-value {% if ownership_pct >= 50 %}metric-positive{% elif ownership_pct > 0 %}metric-warning{% else %}metric-zero{% endif %}">{% if ownership_pct == 0 %}0%{% else %}{{ owned_topics }}/{{ total_topics }}{% endif %}</div>
                 <div class="metric-label">Term Ownership</div>
+                <div class="metric-sub">Topics where brand appears in at least one engine{% if ownership_pct == 0 %} — brand not recommended anywhere{% endif %}</div>
             </div>
         </div>
     </div>
@@ -1480,11 +1581,11 @@ body {
 
     <div class="engine-note">
         <strong>Engines analyzed:</strong> {{ report.citation_matrix.engines|map('replace', ' (mock)', '')|join(', ') }}
-        <div class="legend-inline">
-            <span class="legend-green">●</span><span>Mentioned</span>
-            <span class="legend-yellow">●</span><span>Partial</span>
-            <span class="legend-red">●</span><span>Not Mentioned</span>
-        </div>
+        <span class="legend-inline">
+            <span class="legend-green">●</span><span>Recommended + rank</span>
+            <span style="color:var(--text-muted)">●</span><span>Cited only</span>
+            <span class="legend-red">●</span><span>Not mentioned</span>
+        </span>
     </div>
 
     <div class="matrix-wrapper">
@@ -1506,12 +1607,12 @@ body {
                         {% if cell %}
                             {% if cell.covered %}
                                 {% if cell.target_brand_position %}
-                                    <td class="matrix-cell-covered">✓ #{{ cell.target_brand_position }}{% if cell.best_brand_mentions > 0 %} <span class="matrix-cell-total">of {{ cell.best_brand_mentions }}</span>{% endif %}</td>
+                                    <td class="matrix-cell-covered"><span class="matrix-cell-brand">{{ brand_name }}</span> <span class="matrix-cell-pos">#{{ cell.target_brand_position }}{% if cell.best_brand_mentions > 0 %}<span class="matrix-cell-total">/{{ cell.best_brand_mentions }}</span>{% endif %}</span></td>
                                 {% else %}
-                                    <td class="matrix-cell-covered">✓ cited</td>
+                                    <td class="matrix-cell-covered"><span class="matrix-cell-brand">{{ brand_name }}</span> <span class="matrix-cell-pos">cited</span></td>
                                 {% endif %}
                             {% else %}
-                                <td class="matrix-cell-missed">✗ not mentioned</td>
+                                <td class="matrix-cell-missed"><span class="matrix-cell-missed-inner">✗ not mentioned</span></td>
                             {% endif %}
                         {% else %}
                             <td class="matrix-cell-missed">—</td>
@@ -1573,21 +1674,22 @@ body {
                 <tr>
                     <th>Engine</th>
                     <th>Query</th>
-                    <th>Top Brand</th>
-                    <th>Brand Recommendations</th>
+                    <th>Leading Competitor</th>
+                    <th>Brands Mentioned</th>
                     <th>URL Citations</th>
-                    <th>Avg Position</th>
+                    <th>Your Position</th>
                 </tr>
             </thead>
             <tbody>
             {% for result in report.citation_matrix.results %}
-                <tr>
-                    <td>{{ result.engine|replace(' (mock)', '')|capitalize }}</td>
-                    <td><strong>{{ result.topic }}</strong></td>
+                {% set eng_key = result.engine|replace(' (mock)', '')|lower %}
+                <tr class="row-{{ eng_key }}">
+                    <td class="engine-cell">{{ result.engine|replace(' (mock)', '') }}</td>
+                    <td>{{ result.topic }}</td>
                     <td><span class="hit-badge">{{ result.top_competitor or '—' }}</span></td>
                     <td>{{ result.best_brand_mentions }}x</td>
                     <td>{{ result.best_url_citations }}x</td>
-                    <td>{% if result.best_first_section %}#{{ result.best_first_section }}{% else %}—{% endif %}</td>
+                    <td>{% if result.target_brand_position %}<strong>#{{ result.target_brand_position }}</strong>{% elif result.covered %}<span style="color:var(--text-muted)">cited</span>{% else %}—{% endif %}</td>
                 </tr>
             {% endfor %}
             </tbody>
@@ -1751,29 +1853,29 @@ body {
         {# Signal: Agent Readability #}
         <div class="signal-card">
             <div class="signal-icon">🔍</div>
-            <div class="signal-label">Semantic structure score — how well AI agents can parse page content</div>
             <div class="signal-value">{{ report.crawl_signals.avg_agent_readability }}</div>
             <div class="signal-label">Agent Readability Score</div>
+            <div class="signal-desc">Semantic structure — how well AI agents can parse page content</div>
         </div>
 
         {# Signal: Landmarks #}
         <div class="signal-card">
             <div class="signal-icon">🏗️</div>
-            <div class="signal-label">HTML5 semantic elements (nav, main, header, footer) for agent navigation</div>
             <div class="signal-value {% if report.crawl_signals.pages_with_landmarks < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.pages_with_landmarks }}/{{ report.crawl_signals.total_pages }}
             </div>
             <div class="signal-label">Pages with Landmarks</div>
+            <div class="signal-desc">HTML5 semantic elements (nav, main, header, footer)</div>
         </div>
 
         {# Signal: Missing Alt #}
         <div class="signal-card">
             <div class="signal-icon">🖼️</div>
-            <div class="signal-label">Images without alt text — agents use alt for image context</div>
             <div class="signal-value {% if report.crawl_signals.total_images_missing_alt > 0 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.total_images_missing_alt }}
             </div>
             <div class="signal-label">Images Missing Alt Text</div>
+            <div class="signal-desc">Agents use alt text for image context</div>
         </div>
 
         {# Signal: About Page #}
