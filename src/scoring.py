@@ -314,12 +314,27 @@ _DESCRIPTIVE_TERMS: set[str] = {
     "value-based pricing", "additional resources",
 }
 
-# City names that get capitalized but aren't brands
+# Geographic names that get capitalized but aren't brands
 _GEO_NAMES: set[str] = {
     "falls church", "new york", "los angeles", "san francisco",
     "las vegas", "united states", "united kingdom", "south africa",
     "north america", "european union", "middle east", "south east",
     "washington dc", "washington d.c.",
+    # US states
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming",
+    # "in [state]" variants — location injection produces these in AI responses
+    "in maryland", "in virginia", "in florida", "in texas", "in california",
+    "in ohio", "in georgia", "in pennsylvania", "in new york", "in illinois",
+    "in michigan", "in washington", "in colorado", "in arizona", "in nevada",
 }
 
 
@@ -492,6 +507,10 @@ def _is_plausible_brand(phrase: str) -> bool:
     if len(phrase) <= 3:
         return False
     if all(w.lower() in STOP_WORDS for w in words):
+        return False
+    # Reject phrases that start with a preposition/stop-word — these are
+    # almost never brand names (e.g. "In Maryland", "For Personal Injury")
+    if words[0].lower() in STOP_WORDS:
         return False
     phrase_lower = phrase.lower()
     if phrase_lower in FALSE_POSITIVE_PHRASES:

@@ -38,26 +38,51 @@ def _brand_name(domain: str, crawl_title: str = "", crawl_meta: str = "") -> str
     """
     import re
 
-    bare_domain = domain.split(".")[0].lower().lstrip("www")
+    bare_domain = re.sub(r"^www\.", "", domain.split(".")[0].lower())
     bare_domain_clean = re.sub(r"[^a-z]", "", bare_domain)
 
-    # 1. Try title: find a consecutive word sequence that matches the domain bare name
-    if crawl_title and bare_domain_clean:
-        title = crawl_title.strip()
-        words = title.split()
-        for length in range(1, 6):
+    def _domain_match_in_text(text: str) -> str:
+        """Scan text for a phrase that matches/contains the domain bare name.
+
+        Iterates from longest (5 words) to shortest (2 words) so we get the
+        full name ("Pinder Plotkin") before a partial match ("Pinder").
+        Single-word exact matches are also accepted.
+        Normalises title separators (|, —, -) to spaces before scanning.
+        """
+        normalised = re.sub(r"[|–—]", " ", text)
+        words = normalised.split()
+        for length in range(min(5, len(words)), 0, -1):
             for i in range(len(words) - length + 1):
                 phrase = " ".join(words[i:i + length])
+                if '?' in phrase or '!' in phrase:
+                    continue
+                if not (2 <= len(phrase) <= 40):
+                    continue
                 phrase_norm = re.sub(r"[^a-z]", "", phrase.lower())
                 if not phrase_norm:
                     continue
-                # Accept if phrase matches or overlaps significantly with domain
-                if (phrase_norm == bare_domain_clean
-                        or (len(phrase_norm) >= 4 and phrase_norm in bare_domain_clean)
-                        or (len(bare_domain_clean) >= 4 and bare_domain_clean in phrase_norm)):
-                    # Reject generic/punctuation contaminated
-                    if '?' not in phrase and '!' not in phrase and 2 <= len(phrase) <= 40:
-                        return phrase
+                # Exact full match (any length)
+                if phrase_norm == bare_domain_clean:
+                    return phrase
+                # Partial match only for 2+ word phrases to avoid single-word grabs
+                if length >= 2 and bare_domain_clean and (
+                    (len(phrase_norm) >= 4 and phrase_norm in bare_domain_clean)
+                    or (len(bare_domain_clean) >= 4 and bare_domain_clean in phrase_norm)
+                ):
+                    return phrase
+        return ""
+
+    # 1a. Try title domain-match
+    if crawl_title and bare_domain_clean:
+        match = _domain_match_in_text(crawl_title)
+        if match:
+            return match
+
+    # 1b. Try meta description domain-match (e.g. "Pinder Plotkin has fought…")
+    if crawl_meta and bare_domain_clean:
+        match = _domain_match_in_text(crawl_meta)
+        if match:
+            return match
 
     # 2. Try title: clean separator parts (first or last, picking the shorter/cleaner one)
     if crawl_title:
