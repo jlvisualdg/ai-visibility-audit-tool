@@ -506,6 +506,10 @@ body {
 .diagnostic-metrics .metric-value.metric-warning  { color: #facc15; }
 .diagnostic-metrics .metric-value.metric-zero     { color: #f87171; }
 
+.diagnostic-metrics .metric-card--positive { border-color: rgba(74,222,128,0.35); }
+.diagnostic-metrics .metric-card--warning  { border-color: rgba(250,204,21,0.35); }
+.diagnostic-metrics .metric-card--zero     { border-color: rgba(248,113,113,0.4); }
+
 .diagnostic-metrics .metric-label {
     font-size: 11px;
     color: rgba(255, 255, 255, 0.45);
@@ -862,6 +866,11 @@ body {
 .indexability-section .signal-status-warn { color: var(--warning-500) !important; }
 .indexability-section .signal-status-bad { color: var(--danger-500) !important; }
 
+/* Signal card border color reflects signal state */
+.indexability-section .signal-card--bad  { border-color: rgba(248,113,113,0.5) !important; }
+.indexability-section .signal-card--warn { border-color: rgba(250,204,21,0.35) !important; }
+.indexability-section .signal-card--ok   { border-color: rgba(74,222,128,0.3) !important; }
+
 /* Dark issues list */
 .indexability-section .issues-list {
     background: rgba(255, 255, 255, 0.03) !important;
@@ -983,6 +992,21 @@ body {
 .row-perplexity:hover { background: rgba(124,58,237,0.07); }
 .row-chatgpt:hover    { background: rgba(16,163,127,0.07); }
 .row-gemini:hover     { background: rgba(66,133,244,0.07); }
+
+/* Engine name pill badges in competitive landscape */
+.engine-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    border: 1px solid transparent;
+}
+.engine-pill--perplexity { background: rgba(124,58,237,0.15); color: var(--engine-perplexity); border-color: rgba(124,58,237,0.3); }
+.engine-pill--chatgpt    { background: rgba(16,163,127,0.15);  color: var(--engine-chatgpt);    border-color: rgba(16,163,127,0.3); }
+.engine-pill--gemini     { background: rgba(66,133,244,0.15);  color: var(--engine-gemini);     border-color: rgba(66,133,244,0.3); }
 
 .hit-badge {
     display: inline-block;
@@ -1541,17 +1565,17 @@ body {
         {% set total_topics = competitive_data|length %}
         {% set ownership_pct = ((owned_topics / total_topics * 100)|round|int) if total_topics > 0 else 0 %}
         <div class="diagnostic-metrics">
-            <div class="metric-card">
+            <div class="metric-card {% if report.ai_coverage_pct >= 50 %}metric-card--positive{% elif report.ai_coverage_pct >= 25 %}metric-card--warning{% else %}metric-card--zero{% endif %}">
                 <div class="metric-value {% if report.ai_coverage_pct >= 50 %}metric-positive{% elif report.ai_coverage_pct >= 25 %}metric-warning{% else %}metric-zero{% endif %}">{{ '%.0f' % report.ai_coverage_pct }}%</div>
                 <div class="metric-label">AI Visibility Score</div>
                 <div class="metric-sub">Brand mentioned across all engine × query cells</div>
             </div>
-            <div class="metric-card">
+            <div class="metric-card {% if report.crawl_signals.health_score >= 70 %}metric-card--positive{% elif report.crawl_signals.health_score >= 40 %}metric-card--warning{% else %}metric-card--zero{% endif %}">
                 <div class="metric-value {% if report.crawl_signals.health_score >= 70 %}metric-positive{% elif report.crawl_signals.health_score >= 40 %}metric-warning{% else %}metric-zero{% endif %}">{{ report.crawl_signals.health_score }}<span style="font-size:18px;font-weight:400;opacity:0.4">/100</span></div>
                 <div class="metric-label">Indexability Score</div>
                 <div class="metric-sub">Technical readiness for AI engine crawling</div>
             </div>
-            <div class="metric-card">
+            <div class="metric-card {% if ownership_pct >= 50 %}metric-card--positive{% elif ownership_pct > 0 %}metric-card--warning{% else %}metric-card--zero{% endif %}">
                 <div class="metric-value {% if ownership_pct >= 50 %}metric-positive{% elif ownership_pct > 0 %}metric-warning{% else %}metric-zero{% endif %}">{% if ownership_pct == 0 %}0%{% else %}{{ owned_topics }}/{{ total_topics }}{% endif %}</div>
                 <div class="metric-label">Term Ownership</div>
                 <div class="metric-sub">Topics where brand appears in at least one engine{% if ownership_pct == 0 %} — brand not recommended anywhere{% endif %}</div>
@@ -1674,7 +1698,7 @@ body {
                 <tr>
                     <th>Engine</th>
                     <th>Query</th>
-                    <th>Leading Competitor</th>
+                    <th>Leading Brand</th>
                     <th>Brands Mentioned</th>
                     <th>URL Citations</th>
                     <th>Your Position</th>
@@ -1684,9 +1708,9 @@ body {
             {% for result in report.citation_matrix.results %}
                 {% set eng_key = result.engine|replace(' (mock)', '')|lower %}
                 <tr class="row-{{ eng_key }}">
-                    <td class="engine-cell">{{ result.engine|replace(' (mock)', '') }}</td>
+                    <td class="engine-cell"><span class="engine-pill engine-pill--{{ eng_key }}">{{ result.engine|replace(' (mock)', '') }}</span></td>
                     <td>{{ result.topic }}</td>
-                    <td><span class="hit-badge">{{ result.top_competitor or '—' }}</span></td>
+                    <td>{% if result.target_brand_position == 1 %}<span class="matrix-cell-brand">{{ brand_name }}</span>{% elif result.top_competitor %}<span class="hit-badge">{{ result.top_competitor }}</span>{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}</td>
                     <td>{{ result.best_brand_mentions }}x</td>
                     <td>{{ result.best_url_citations }}x</td>
                     <td>{% if result.target_brand_position %}<strong>#{{ result.target_brand_position }}</strong>{% elif result.covered %}<span style="color:var(--text-muted)">cited</span>{% else %}—{% endif %}</td>
@@ -1781,24 +1805,26 @@ body {
         </div>
 
         {# Signal: Authorship #}
-        <div class="signal-card">
+        <div class="signal-card {% if report.crawl_signals.authorship_pages == 0 %}signal-card--bad{% elif report.crawl_signals.authorship_pages < report.crawl_signals.total_pages // 2 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
             <div class="signal-icon">👤</div>
             <div class="signal-value {% if report.crawl_signals.authorship_pages == 0 %}signal-status-bad{% elif report.crawl_signals.authorship_pages < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.authorship_pages }}/{{ report.crawl_signals.total_pages }}
             </div>
             <div class="signal-label">Pages with Authorship</div>
+            <div class="signal-desc">Detected via rel="author", itemprop="author", or Person schema</div>
         </div>
 
         {# Subgroup: Schema & Entity #}
         <div class="signal-subgroup">Schema & Entity</div>
 
         {# Signal: Schema Markup #}
-        <div class="signal-card">
+        <div class="signal-card {% if report.crawl_signals.schema_pages == 0 %}signal-card--bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
             <div class="signal-icon">🔖</div>
             <div class="signal-value {% if report.crawl_signals.schema_pages == 0 %}signal-status-bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.schema_pages }}/{{ report.crawl_signals.total_pages }}
             </div>
             <div class="signal-label">Pages with Schema Markup</div>
+            <div class="signal-desc">JSON-LD or microdata detected via script[type="application/ld+json"] or itemtype</div>
         </div>
 
         {# Signal: Thin Pages #}
@@ -1839,12 +1865,13 @@ body {
         <div class="signal-subgroup">Response Speed</div>
 
         {# Signal: Response Time #}
-        <div class="signal-card">
+        <div class="signal-card {% if report.crawl_signals.avg_response_ms > 3000 %}signal-card--bad{% elif report.crawl_signals.avg_response_ms > 1000 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
             <div class="signal-icon">⚡</div>
-            <div class="signal-value {% if report.crawl_signals.avg_response_ms > 500 %}signal-status-warn{% elif report.crawl_signals.avg_response_ms > 1000 %}signal-status-bad{% else %}signal-status-ok{% endif %}">
+            <div class="signal-value {% if report.crawl_signals.avg_response_ms > 3000 %}signal-status-bad{% elif report.crawl_signals.avg_response_ms > 1000 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.avg_response_ms }}ms
             </div>
             <div class="signal-label">Avg Response Time</div>
+            <div class="signal-desc">Under 1s = fast · 1–3s = acceptable · over 3s = AI crawlers may time out</div>
         </div>
 
         {# Subgroup: Agent Readability #}
@@ -1859,13 +1886,13 @@ body {
         </div>
 
         {# Signal: Landmarks #}
-        <div class="signal-card">
+        <div class="signal-card {% if report.crawl_signals.pages_with_landmarks == 0 %}signal-card--bad{% elif report.crawl_signals.pages_with_landmarks < report.crawl_signals.total_pages // 2 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
             <div class="signal-icon">🏗️</div>
-            <div class="signal-value {% if report.crawl_signals.pages_with_landmarks < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
+            <div class="signal-value {% if report.crawl_signals.pages_with_landmarks == 0 %}signal-status-bad{% elif report.crawl_signals.pages_with_landmarks < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">
                 {{ report.crawl_signals.pages_with_landmarks }}/{{ report.crawl_signals.total_pages }}
             </div>
             <div class="signal-label">Pages with Landmarks</div>
-            <div class="signal-desc">HTML5 semantic elements (nav, main, header, footer)</div>
+            <div class="signal-desc">Count of pages with any HTML5 landmark tag (nav, main, header, footer, article)</div>
         </div>
 
         {# Signal: Missing Alt #}
@@ -1937,11 +1964,11 @@ body {
    SECTION 8 — FOOTER CTA
    ==================================================================== #}
 <div class="cta">
-    <div class="cta-title">That's the diagnosis.</div>
-    <p class="cta-text">Want a content team to execute these fixes and run this audit monthly? Book a workshop.</p>
+    <div class="cta-title">That's the diagnosis — we've got the playbook.</div>
+    <p class="cta-text">Want help to get your AEO solved? AI engines aren't recommending you yet — but that's fixable. Book a strategy session and we'll map out exactly what it takes to get you cited.</p>
     <div class="cta-buttons">
-        <a class="cta-button" href="https://smartmarketer.com/workshops">Book a Workshop</a>
-        <a class="cta-button secondary" href="https://smartmarketer.com/audit">Get Another Audit</a>
+        <a class="cta-button" href="https://smartmarketer.com/workshops">Let's Solve Your AEO</a>
+        <a class="cta-button secondary" href="https://smartmarketer.com/audit">Run Another Audit</a>
     </div>
 </div>
 

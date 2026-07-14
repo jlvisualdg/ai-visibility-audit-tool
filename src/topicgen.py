@@ -137,6 +137,14 @@ Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
     if len(topics) >= 4:
         _inject_keyword_variations(topics, body, key, timeout)
 
+    # 7. Hard post-filter: remove any remaining informational queries
+    topics = _hard_filter_informational(topics, n)
+
+    # 8. Location injection: if local business, append city to all queries
+    city = _extract_city(title, body[:500], key, timeout)
+    if city:
+        topics = _inject_location(topics, city)
+
     return topics[:n]
 
 
@@ -372,6 +380,86 @@ def _inject_keyword_variations(
                 topics[2] = variations[1]
     except (requests.RequestException, json.JSONDecodeError, KeyError):
         return
+
+
+def _hard_filter_informational(topics: list[str], n: int) -> list[str]:
+    """Remove any remaining informational queries after LLM validation retries.
+
+    Returns the same list with informational entries replaced by generic
+    BOTF placeholders so we always have n topics.
+    """
+    _GENERIC_BOTF = [
+        "best service providers in this category 2026",
+        "top rated solutions in this industry",
+        "hire a professional service provider near me",
+        "find a reliable service agency online",
+    ]
+    result = []
+    generic_idx = 0
+    for t in topics:
+        if _INFORMATIONAL_RE.match(t):
+            # Replace with a generic BOTF query
+            result.append(_GENERIC_BOTF[generic_idx % len(_GENERIC_BOTF)])
+            generic_idx += 1
+        else:
+            result.append(t)
+    return result[:n]
+
+
+def _extract_city(title: str, body_excerpt: str, api_key: str, timeout: int) -> Optional[str]:
+    """Extract the primary city this business serves, if it's a local business.
+
+    Returns the city name (e.g. 'Baltimore') or None for national/global brands.
+    City takes priority over state per style guide.
+    """
+    if not api_key:
+        return None
+    prompt = (
+        "If this is a LOCAL business serving a specific city, return ONLY the city name "
+        "(e.g. 'Baltimore', 'Chicago', 'Miami'). "
+        "Return NOTHING (empty string) if this is a national brand, online-only, or serves broadly.\n\n"
+        f"Title: {title}\nText: {body_excerpt}"
+    )
+    try:
+        r = requests.post(
+            TOPICGEN_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": TOPICGEN_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.0,
+                "max_tokens": 20,
+            },
+            timeout=timeout,
+        )
+        if not r.ok:
+            return None
+        resp = r.json()
+        _accumulate_cost(resp)
+        city = resp["choices"][0]["message"]["content"].strip().strip('"').strip("'").strip(".")
+        # Sanity check: should be 1-3 words, no punctuation beyond comma
+        if city and 2 <= len(city) <= 30 and "\n" not in city:
+            # Strip trailing state or country additions (e.g. "Baltimore, MD" → "Baltimore")
+            city = city.split(",")[0].strip()
+            return city if city else None
+        return None
+    except (requests.RequestException, json.JSONDecodeError, KeyError):
+        return None
+
+
+def _inject_location(topics: list[str], city: str) -> list[str]:
+    """Append 'in [city]' to each topic that doesn't already mention the city."""
+    city_lower = city.lower()
+    result = []
+    for t in topics:
+        if city_lower in t.lower():
+            result.append(t)
+        else:
+            result.append(f"{t} in {city}")
+    return result
 
 
 def _fallback_topics(domain: str, n: int, homepage_html: str = "", api_key: str = "") -> list[str]:

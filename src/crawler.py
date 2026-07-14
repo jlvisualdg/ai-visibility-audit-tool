@@ -975,6 +975,20 @@ def _aggregate(result: CrawlResult) -> None:
             ),
         ))
 
+    # ── Response time threshold ───────────────────────────────────────────
+    if result.avg_response_ms > 5000:
+        issues.append(CrawlIssue(
+            category="performance",
+            severity="critical",
+            detail=f"Extremely slow avg response time ({result.avg_response_ms}ms) — AI crawlers time out at ~5s and will skip slow pages",
+        ))
+    elif result.avg_response_ms > 3000:
+        issues.append(CrawlIssue(
+            category="performance",
+            severity="high",
+            detail=f"Slow avg response time ({result.avg_response_ms}ms) — ideal is under 3s to ensure reliable AI crawler access",
+        ))
+
     # ── Credibility / baseline trust checks ──────────────────────────────
     if not result.has_ssl:
         issues.append(CrawlIssue(

@@ -27,9 +27,10 @@ def _brand_name(domain: str, crawl_title: str = "", crawl_meta: str = "") -> str
     """Strict brand name extraction from scrape data.
 
     Priority:
-    1. Page title — split on separators (|, -, —, ::), take first part
-    2. Meta description — first 1-2 words if title fails
-    3. Domain — humanized fallback only
+    1. Page title — find phrase that matches the domain (handles tagline titles)
+    2. Page title — short, clean separator parts
+    3. Meta description — first 1-2 words (filtered for sentence starters)
+    4. Domain — humanized fallback
 
     The brand name is the foundational datapoint for the entire visibility
     audit. If this is wrong, brand mention matching against AI responses
@@ -37,32 +38,70 @@ def _brand_name(domain: str, crawl_title: str = "", crawl_meta: str = "") -> str
     """
     import re
 
-    # 1. Try page title first
+    bare_domain = domain.split(".")[0].lower().lstrip("www")
+    bare_domain_clean = re.sub(r"[^a-z]", "", bare_domain)
+
+    # 1. Try title: find a consecutive word sequence that matches the domain bare name
+    if crawl_title and bare_domain_clean:
+        title = crawl_title.strip()
+        words = title.split()
+        for length in range(1, 6):
+            for i in range(len(words) - length + 1):
+                phrase = " ".join(words[i:i + length])
+                phrase_norm = re.sub(r"[^a-z]", "", phrase.lower())
+                if not phrase_norm:
+                    continue
+                # Accept if phrase matches or overlaps significantly with domain
+                if (phrase_norm == bare_domain_clean
+                        or (len(phrase_norm) >= 4 and phrase_norm in bare_domain_clean)
+                        or (len(bare_domain_clean) >= 4 and bare_domain_clean in phrase_norm)):
+                    # Reject generic/punctuation contaminated
+                    if '?' not in phrase and '!' not in phrase and 2 <= len(phrase) <= 40:
+                        return phrase
+
+    # 2. Try title: clean separator parts (first or last, picking the shorter/cleaner one)
     if crawl_title:
         title = crawl_title.strip()
-        # Split on common title separators
         parts = re.split(r'\s*[|]\s*|\s*[-–—]\s*|\s*::\s*', title)
-        if parts and parts[0].strip():
-            candidate = parts[0].strip()
-            # Reject generic words
-            generic = {"home", "homepage", "welcome", "index", "untitled", "document"}
-            if candidate.lower() not in generic and 2 <= len(candidate) <= 40:
-                return candidate
+        generic = {"home", "homepage", "welcome", "index", "untitled", "document"}
+        candidates = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if part.lower() in generic:
+                continue
+            if '?' in part or '!' in part:
+                continue
+            words = part.split()
+            if 1 <= len(words) <= 4 and 2 <= len(part) <= 40:
+                candidates.append(part)
+        if candidates:
+            # Prefer the shortest candidate (brand names are concise)
+            return min(candidates, key=len)
 
-    # 2. Try meta description
+    # 3. Try meta description — first 1-2 words, filtered for sentence starters
+    _NON_BRAND_STARTS = {
+        "injured", "are", "have", "call", "get", "find", "need", "want", "our", "we",
+        "if", "do", "did", "been", "lost", "hurt", "experience", "receive", "when",
+        "discover", "learn", "explore", "contact", "serving", "providing", "helping",
+        "the", "a", "an", "welcome", "trusted",
+    }
     if crawl_meta:
         meta = crawl_meta.strip()
-        # Take first 1-2 words that look like a brand
         words = meta.split()[:2]
-        if words:
+        if words and words[0].lower() not in _NON_BRAND_STARTS:
             candidate = " ".join(words)
-            if (2 <= len(candidate) <= 40
-                    and not candidate.lower().startswith(("the ", "a ", "an ", "welcome"))):
+            if 2 <= len(candidate) <= 40:
                 return candidate
 
-    # 3. Fallback: humanize domain
-    bare = domain.split(".")[0]
-    parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare).split()
+    # 4. Fallback: humanize domain (CamelCase split, then capitalize)
+    bare = domain.split(".")[0].lstrip("www")
+    # Handle hyphens and underscores
+    bare = bare.replace("-", " ").replace("_", " ")
+    # CamelCase split
+    bare = re.sub(r"([a-z])([A-Z])", r"\1 \2", bare)
+    parts = bare.split()
     return " ".join(p.capitalize() for p in parts)
 
 
