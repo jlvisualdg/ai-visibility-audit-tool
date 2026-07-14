@@ -132,7 +132,8 @@ class CitationMatrix:
     topics: list[str] = field(default_factory=list)
     engines: list[str] = field(default_factory=list)
     results: list[TopicResult] = field(default_factory=list)
-    all_competitors: dict = field(default_factory=dict)  # domain -> count
+    all_competitors: dict = field(default_factory=dict)  # brand name -> recommendation count
+    brand_urls: dict = field(default_factory=dict)        # brand name -> bare domain (when cited)
 
     @property
     def total_cells(self) -> int:

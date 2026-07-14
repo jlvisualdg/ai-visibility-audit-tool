@@ -15,7 +15,7 @@ from src.engines import (
     ChatGPTEngine,
 )
 from src.gemini_dataforseo import GeminiDataForSEOEngine
-from src.scoring import extract_brand_mentions
+from src.brand_extract import extract_brands_llm, reset_brand_extract_cost
 
 # ---------------------------------------------------------------------------
 # Engine name map — lowercase internal → display name
@@ -78,6 +78,9 @@ def execute_all(
 
     engine_classes = [PerplexityEngine, ChatGPTEngine, _GeminiWrapper]
 
+    # Fresh cost accounting for this audit run's brand-extraction LLM calls
+    reset_brand_extract_cost()
+
     results: list[dict] = []
 
     for cls in engine_classes:
@@ -122,9 +125,10 @@ def execute_all(
                 }
 
             # ── Two independent metrics ──
-            # 1. BRAND RECOMMENDATIONS: brand names explicitly written in the
-            #    AI's answer text (what the user reads). Extracted via regex
-            #    on capitalized phrases, filtered for AI-isms.
+            # 1. BRAND RECOMMENDATIONS: the specific companies/brands the AI
+            #    names as options in its answer text (what the user reads).
+            #    Extracted by an LLM entity pass that also attaches each brand
+            #    to its cited URL when the answer provides one.
             # 2. CITATIONS: domains/URLs returned as sources/annotations by
             #    the engine (technical source references). These are separate
             #    from brand recommendations — a domain can be cited without
@@ -136,15 +140,20 @@ def execute_all(
             if error:
                 brand_mentions: list[str] = []
                 positions: list[int] = []
+                brand_urls: dict[str, str] = {}
             else:
                 try:
-                    # Brand recommendations: from text only
-                    brand_mentions, positions = extract_brand_mentions(
-                        text, target_domain, target_brand_name
+                    brand_mentions, positions, brand_urls = extract_brands_llm(
+                        text,
+                        citations,
+                        target_domain,
+                        target_brand_name,
+                        api_key=api_key,
                     )
                 except Exception:
                     brand_mentions = []
                     positions = []
+                    brand_urls = {}
 
             results.append({
                 "topic": topic,
@@ -156,6 +165,7 @@ def execute_all(
                 "brand_mentions": brand_mentions,
                 "positions": positions,
                 "target_mention_count": len(positions),
+                "brand_urls": brand_urls,
                 "cost_usd": raw.get("cost_usd", 0.0),
             })
 

@@ -168,20 +168,19 @@ def extract_brand_mentions(
     """Extract brand names from AI response text using contextual analysis.
 
     Brand recommendations in AI responses appear in specific structural contexts:
-    1. Numbered/bulleted list items (e.g. "1. Midi Health - ...")
-    2. Bold or linked markdown (e.g. "**Midi Health**" or "[Midi Health](url)")
-    3. After recommendation verbs ("recommend", "suggest", "consider", "top pick")
-    4. As standalone capitalized names NOT part of a descriptive phrase
+    1. Numbered/bulleted list items (e.g. "1. Miller & Zois - ...")
+    2. Bold markdown (e.g. "**Miller & Zois** offers...")
+    3. Linked markdown text (e.g. "[Miller & Zois](url)")
 
-    Descriptive phrases like "Hormone Replacement Therapy" or "Online Directories"
-    are filtered out because they appear in prose context, not recommendation context.
+    Only high-salience markdown structures are scanned — free prose is ignored
+    because PLAIN_BRAND matching on prose captures category phrases
+    ("Free Consultation", "Personal Injury Attorney") that are not brand names.
 
     Extraction strategy:
     1. Split response into blocks (double-newline separated)
-    2. Identify "recommendation blocks" (lists, bold names, linked names)
-    3. Extract capitalized phrases only from recommendation blocks
-    4. Filter through plausibility checks (stop words, AI-isms, descriptive terms)
-    5. Track target brand positions
+    2. From each block extract: list item heads, bold names, linked names
+    3. Filter through plausibility checks (stop words, AI-isms, descriptive terms)
+    4. Track target brand positions
 
     Args:
         response_text: The AI engine response text to scan.
@@ -243,11 +242,17 @@ def extract_brand_mentions(
 # Regex for detecting numbered-list item prefixes like "1.", "2)", "1 -", etc.
 _LIST_ITEM_RE = re.compile(r"^\s*(?:\d+[.\)]\s*|[-*]\s+)(.+)", re.MULTILINE)
 
-# Regex for bold markdown: **Brand Name** or **Brand** (single or multi-word)
+# Regex for bold markdown: **Brand Name** or **Brand** (single or multi-word, no &)
 _BOLD_RE = re.compile(r"\*\*([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\*\*")
 
-# Regex for linked markdown: [Brand Name](url)
+# Companion: bold connector brands — **Miller & Zois** / **Johnson and Johnson**
+_BOLD_CONN_RE = re.compile(r"\*\*([A-Z][a-z]+\s+(?:&|and)\s+[A-Z][a-z]+)\*\*", re.IGNORECASE)
+
+# Regex for linked markdown: [Brand Name](url) — captures multi-word title-case text
 _LINKED_RE = re.compile(r"\[([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)\]\(")
+
+# Companion: linked connector brands — [Miller & Zois](url)
+_LINKED_CONN_RE = re.compile(r"\[([A-Z][a-z]+\s+(?:&|and)\s+[A-Z][a-z]+)\]\(", re.IGNORECASE)
 
 # Regex for connector brands in list items
 _LIST_CONNECTOR_RE = re.compile(
@@ -312,6 +317,27 @@ _DESCRIPTIVE_TERMS: set[str] = {
     "price transparency", "cost factors",
     "affordable options", "budget-friendly options",
     "value-based pricing", "additional resources",
+    # Legal / personal injury category labels commonly bolded in AI responses
+    "case expenses", "case costs", "case evaluation", "case review",
+    "contingency fee", "contingency fees", "contingency basis",
+    "legal fees", "legal costs", "legal expenses", "legal representation",
+    "legal services", "legal advice", "legal options",
+    "attorney fees", "attorney costs", "attorney services",
+    "settlement amount", "settlement process", "settlement value",
+    "injury claims", "injury cases", "injury settlement", "injury compensation",
+    "accident claims", "accident cases", "accident victims",
+    "medical bills", "medical expenses", "medical treatment",
+    "pain suffering", "pain and suffering",
+    "property damage", "property damages",
+    "economic damages", "non-economic damages", "punitive damages",
+    "compensatory damages", "bodily injury", "serious injury",
+    "wrongful death", "liability claims", "negligence claims",
+    "statute of limitations", "court costs", "court proceedings",
+    "litigation costs", "workers compensation", "workers comp",
+    "insurance claims", "insurance companies", "insurance coverage",
+    "no win no fee", "free case review", "free case evaluation",
+    "personal injury law", "personal injury claims", "personal injury cases",
+    "personal injury attorneys", "personal injury lawyers",
 }
 
 # Geographic names that get capitalized but aren't brands
@@ -339,18 +365,16 @@ _GEO_NAMES: set[str] = {
 
 
 def _extract_brands_from_block(block: str) -> list[str]:
-    """Extract candidate brand names from a single text block.
+    """Extract brand names from high-salience markdown structures only.
 
-    Detects brands in:
-    - Numbered/bulleted list items: "1. Midi Health - ..."
-    - Bold text: "**Midi Health** offers..."
-    - Linked text: "[Midi Health](https://...)"
-    - Connector brands in lists: "1. Johnson & Johnson - ..."
+    Extracts ONLY from:
+    - Numbered/bulleted list item heads (the entity being recommended)
+    - Bold names (**Brand**) anywhere in the block
+    - Linked text ([Brand](url)) anywhere in the block
 
-    Filters OUT:
-    - Markdown table rows (| Col1 | Col2 |)
-    - Table column headers
-    - Phrases containing " & " that are descriptive (e.g. "Testosterone & Estradiol")
+    Does NOT scan prose sentences — PLAIN_BRAND on free text picks up
+    capitalized category phrases ("Free Consultation", "Personal Injury Attorney")
+    that are not brand recommendations.
     """
     candidates: list[str] = []
     seen_lower: set[str] = set()
@@ -360,9 +384,7 @@ def _extract_brands_from_block(block: str) -> list[str]:
             candidates.append(phrase)
             seen_lower.add(phrase.lower())
 
-    # Skip markdown table rows entirely — they contain column headers
-    # and descriptive labels, not brand recommendations
-    # Detect lines starting with | (table rows) or :--- (table separators)
+    # Strip markdown table rows — extract bold brands from cells, ignore rest
     lines = block.split("\n")
     non_table_lines = []
     in_table = False
@@ -370,7 +392,6 @@ def _extract_brands_from_block(block: str) -> list[str]:
         stripped = line.strip()
         if stripped.startswith("|") or stripped.startswith(":--") or stripped.startswith("--:"):
             in_table = True
-            # But extract bold brands from table cells (e.g. | **Midi Health** | ...)
             for m in _BOLD_RE.finditer(stripped):
                 _add(m.group(1))
             continue
@@ -381,49 +402,62 @@ def _extract_brands_from_block(block: str) -> list[str]:
 
     clean_block = "\n".join(non_table_lines)
 
-    # 1. List items: "1. Brand Name ..." or "- Brand Name ..."
+    # 1. List item heads — the entity named at the START of each list line.
+    #    Strip bold/link wrappers first so connector brands like "Miller & Zois"
+    #    inside **...** or [...](url) are correctly captured.
     for m in _LIST_ITEM_RE.finditer(clean_block):
         item_text = m.group(1).strip()
-        # Extract the first capitalized phrase from the list item
-        brand_match = PLAIN_BRAND.match(item_text)
-        if brand_match:
-            _add(brand_match.group(1))
-        else:
-            # Single capitalized word as brand (e.g. "Winona")
-            single = re.match(r'^([A-Z][a-z]{2,})\b', item_text)
-            if single:
-                _add(single.group(1))
+        # Bold-wrapped head: **Brand** or **Brand & Name**
+        bold_head = re.match(r'^\*\*(.+?)\*\*', item_text)
+        if bold_head:
+            entity = bold_head.group(1)
+            conn_m = CONNECTOR_BRAND.match(entity)
+            if conn_m:
+                _add(conn_m.group(1))
+            else:
+                plain_m = PLAIN_BRAND.match(entity)
+                if plain_m:
+                    _add(plain_m.group(1))
+                else:
+                    single = re.match(r'^([A-Z][a-z]{2,})\b', entity)
+                    if single:
+                        _add(single.group(1))
+            continue
+        # Linked head: [Brand](url) or [Brand & Name](url)
+        link_head = re.match(r'^\[(.+?)\]\(', item_text)
+        if link_head:
+            entity = link_head.group(1)
+            conn_m = CONNECTOR_BRAND.match(entity)
+            if conn_m:
+                _add(conn_m.group(1))
+            elif re.match(r'^[A-Z]', entity):
+                plain_m = PLAIN_BRAND.match(entity)
+                _add(plain_m.group(1) if plain_m else entity.split(" - ")[0].strip())
+            continue
+        # Plain text head: try connector, then multi-word brand, then single word
+        conn_m = CONNECTOR_BRAND.match(item_text)
+        if conn_m:
+            _add(conn_m.group(1))
+            continue
+        plain_m = PLAIN_BRAND.match(item_text)
+        if plain_m:
+            _add(plain_m.group(1))
+            continue
+        single = re.match(r'^([A-Z][a-z]{2,})\b', item_text)
+        if single:
+            _add(single.group(1))
 
-    # 2. Bold brands in clean block (table bolds already extracted above)
+    # 2. Bold names anywhere in the block (AI uses bold to highlight the entity)
     for m in _BOLD_RE.finditer(clean_block):
         _add(m.group(1))
+    for m in _BOLD_CONN_RE.finditer(clean_block):
+        _add(m.group(1))
 
-    # 3. Linked brands
+    # 3. Linked names anywhere in the block (link text is the explicit entity label)
     for m in _LINKED_RE.finditer(clean_block):
         _add(m.group(1))
-
-    # 4. Plain brand regex on clean block only (not table rows)
-    for m in PLAIN_BRAND.finditer(clean_block):
+    for m in _LINKED_CONN_RE.finditer(clean_block):
         _add(m.group(1))
-
-    # 5. Connector brands — but only if both parts are plausible brand names
-    # (filters out "Testosterone & Estradiol", "Skin & Beauty", etc.)
-    for m in CONNECTOR_BRAND.finditer(clean_block):
-        phrase = m.group(1)
-        parts = re.split(r'\s+(?:&|and)\s+', phrase, flags=re.IGNORECASE)
-        if len(parts) == 2:
-            # Both parts must look like brand names (not generic words)
-            p1, p2 = parts[0].lower(), parts[1].lower()
-            _MEDICAL_WORDS = {
-                "testosterone", "estrogen", "progesterone", "estradiol",
-                "hormone", "hormones", "skin", "beauty", "hair", "nails",
-                "weight", "sleep", "mood", "energy", "libido", "menopause",
-                "perimenopause", "wellness", "health", "care", "medical",
-                "clinical", "nutrition", "fitness", "mental", "physical",
-                "sexual", "digestive", "immune", "bone", "heart", "brain",
-            }
-            if p1 not in _MEDICAL_WORDS and p2 not in _MEDICAL_WORDS:
-                _add(phrase)
 
     return candidates
 
@@ -433,17 +467,12 @@ def _extract_bold_linked_brands(text: str) -> list[str]:
     brands: list[str] = []
     seen_lower: set[str] = set()
 
-    for m in _BOLD_RE.finditer(text):
-        phrase = m.group(1)
-        if phrase.lower() not in seen_lower:
-            brands.append(phrase)
-            seen_lower.add(phrase.lower())
-
-    for m in _LINKED_RE.finditer(text):
-        phrase = m.group(1)
-        if phrase.lower() not in seen_lower:
-            brands.append(phrase)
-            seen_lower.add(phrase.lower())
+    for regex in (_BOLD_RE, _BOLD_CONN_RE, _LINKED_RE, _LINKED_CONN_RE):
+        for m in regex.finditer(text):
+            phrase = m.group(1)
+            if phrase.lower() not in seen_lower:
+                brands.append(phrase)
+                seen_lower.add(phrase.lower())
 
     return brands
 
@@ -571,27 +600,94 @@ def _extract_target_tokens(domain: str) -> list[str]:
     return tokens
 
 
+# Corporate/legal entity suffixes stripped before fuzzy comparison. These are
+# universal business-entity markers (not industry-specific), so a website's
+# "Pinder Plotkin LLC" matches an AI response's "Pinder Plotkin".
+_CORP_SUFFIXES: set[str] = {
+    "llc", "l.l.c", "llp", "lllp", "lp", "inc", "incorporated", "corp",
+    "corporation", "co", "company", "ltd", "limited", "pa", "p.a", "pc",
+    "p.c", "pllc", "plc", "group", "associates", "partners", "gmbh", "sa",
+    "sas", "bv", "ag", "nv", "srl", "esq",
+}
+
+
+def _normalize_for_fuzzy(s: str) -> str:
+    """Aggressively normalize a brand name for fuzzy identity comparison.
+
+    Lowercases, collapses "&"/"and", drops all punctuation, strips trailing
+    corporate suffixes (LLC, LLP, Inc, P.A., ...), then removes spaces entirely
+    so "Pinder Plotkin LLC", "Pinder Plotkin", and domain "pinderplotkin" all
+    collapse to the same key "pinderplotkin". Fully generic across verticals.
+    """
+    s = s.lower()
+    s = re.sub(r"\s*(?:&|and)\s*", " ", s)
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    words = s.split()
+    while words and words[-1] in _CORP_SUFFIXES:
+        words = words[:-1]
+    return "".join(words)
+
+
+def _brand_variants(s: str) -> set[str]:
+    """Normalized forms of a brand for matching against domains.
+
+    A brand with a connector can appear in a domain two ways: dropped
+    ("Miller & Zois" -> millerzois.com) or spelled out (millerandzois.com).
+    We generate BOTH so either domain form matches. Corporate suffixes are
+    stripped and punctuation removed. Fully generic across verticals.
+    """
+    s = s.lower()
+    s = re.sub(r"&", " and ", s)
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    words = s.split()
+    while words and words[-1] in _CORP_SUFFIXES:
+        words = words[:-1]
+    keep = "".join(words)                                # millerandzois
+    drop = "".join(w for w in words if w != "and")       # millerzois
+    return {v for v in (keep, drop) if v}
+
+
+def _fuzzy_target_match(brand: str, target_tokens: list[str]) -> bool:
+    """Return True if `brand` is the target, tolerant of suffix/spacing/case.
+
+    Compares connector variants (with/without "and") on both sides. Exact
+    equality matches at any length; substring containment requires both sides
+    be >= 5 chars to avoid short-token false positives.
+    """
+    b_variants = _brand_variants(brand) or {_normalize_for_fuzzy(brand)}
+    b_variants = {v for v in b_variants if v}
+    if not b_variants:
+        return False
+    for token in target_tokens:
+        t_variants = _brand_variants(token) or {_normalize_for_fuzzy(token)}
+        for tn in t_variants:
+            if not tn:
+                continue
+            for b in b_variants:
+                if b == tn:
+                    return True
+                if len(tn) >= 5 and len(b) >= 5 and (tn in b or b in tn):
+                    return True
+    return False
+
+
 def _find_target_positions(
     brands: list[str],
     target_tokens: list[str],
 ) -> list[int]:
     """Find 1-indexed positions where the target brand appears in `brands`.
 
-    Both the brand name and target tokens are normalized before comparison:
-    "&" / "and" connectors are collapsed to spaces so that "Procter & Gamble"
-    matches a token of "procter gamble" from domain "procter-gamble.com".
+    Uses fuzzy identity matching so the target is recognized regardless of
+    corporate suffix, spacing, or punctuation differences between the website's
+    brand name, the domain, and how the AI response wrote it.
     """
     if not target_tokens:
         return []
 
     positions: list[int] = []
     for i, brand in enumerate(brands, start=1):
-        brand_norm = _normalize_brand_for_match(brand)
-        for token in target_tokens:
-            token_norm = _normalize_brand_for_match(token)
-            if token_norm in brand_norm or brand_norm in token_norm:
-                positions.append(i)
-                break  # each brand phrase counts at most once per mention
+        if _fuzzy_target_match(brand, target_tokens):
+            positions.append(i)
     return positions
 
 
@@ -703,19 +799,8 @@ def calculate_overall_ai_presence(query_scores: list[float]) -> float:
 
 
 def _is_target_brand(brand: str, target_tokens: list[str]) -> bool:
-    """Return True if *brand* matches the target domain tokens."""
-    if not target_tokens:
-        return False
-    brand_norm = _normalize_brand_for_match(brand)
-    if not brand_norm:
-        return False
-    for token in target_tokens:
-        token_norm = _normalize_brand_for_match(token)
-        if not token_norm:
-            continue
-        if token_norm in brand_norm or brand_norm in token_norm:
-            return True
-    return False
+    """Return True if *brand* is the target, tolerant of suffix/spacing/case."""
+    return _fuzzy_target_match(brand, target_tokens)
 
 
 def _domain_contains_citation(citation: str, target_domain: str) -> bool:

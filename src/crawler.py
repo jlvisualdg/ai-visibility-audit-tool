@@ -204,6 +204,10 @@ class CrawlResult:
     robots_text: str = ""
     issues: list[CrawlIssue] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Access/read restrictions encountered during crawl (set in _aggregate)
+    rate_limited: bool = False          # any HTTP 429 seen
+    access_restricted: bool = False     # any HTTP 401/403 seen
+    core_pages_only: bool = False       # broad crawl skipped due to rate limiting
     title: str = ""
     meta_description: str = ""
     # v1.1 signals
@@ -246,6 +250,53 @@ class CrawlResult:
         for issue in self.issues:
             out[issue.severity] = out.get(issue.severity, 0) + 1
         return out
+
+    @property
+    def data_incomplete(self) -> bool:
+        """True if access/read restrictions likely made the crawl partial."""
+        return self.rate_limited or self.access_restricted
+
+    @property
+    def access_error_summary(self) -> list[str]:
+        """Human-readable summary of the specific read issues encountered.
+
+        Buckets the raw ``errors`` list by HTTP status / failure type so the
+        report can show 'N requests rate-limited (HTTP 429)' rather than a wall
+        of URLs.
+        """
+        import re as _re
+        n_429 = n_403 = n_404 = n_5xx = n_other = 0
+        n_req_err = 0
+        for e in self.errors:
+            m = _re.search(r"HTTP (\d{3})", e)
+            if m:
+                code = int(m.group(1))
+                if code == 429:
+                    n_429 += 1
+                elif code in (401, 403):
+                    n_403 += 1
+                elif code == 404:
+                    n_404 += 1
+                elif 500 <= code <= 599:
+                    n_5xx += 1
+                else:
+                    n_other += 1
+            elif "Request error" in e or "Could not reach" in e:
+                n_req_err += 1
+        summary: list[str] = []
+        if n_429:
+            summary.append(f"{n_429} request{'s' if n_429 != 1 else ''} rate-limited (HTTP 429)")
+        if n_403:
+            summary.append(f"{n_403} request{'s' if n_403 != 1 else ''} access-restricted (HTTP 401/403)")
+        if n_5xx:
+            summary.append(f"{n_5xx} request{'s' if n_5xx != 1 else ''} hit a server error (HTTP 5xx)")
+        if n_404:
+            summary.append(f"{n_404} page{'s' if n_404 != 1 else ''} not found (HTTP 404)")
+        if n_other:
+            summary.append(f"{n_other} request{'s' if n_other != 1 else ''} returned an unexpected status")
+        if n_req_err:
+            summary.append(f"{n_req_err} request{'s' if n_req_err != 1 else ''} failed to connect or timed out")
+        return summary
 
 
 # ---------------------------------------------------------------------------
@@ -294,15 +345,15 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
 
     # 2a. Homepage (required — bail if unreachable)
     homepage_snap, homepage_soup = _fetch_and_analyze(
-        session, f"https://{domain}/", domain, timeout, "homepage"
+        session, f"https://{domain}/", domain, timeout, "homepage", result
     )
     if homepage_snap is None:
         homepage_snap, homepage_soup = _fetch_and_analyze(
-            session, f"http://{domain}/", domain, timeout, "homepage"
+            session, f"http://{domain}/", domain, timeout, "homepage", result
         )
     if homepage_snap is None:
         result.errors.append(f"Could not reach {domain}")
-        result.health_score = 0
+        _aggregate(result)  # classifies any 429/403 so the report explains why
         return result
 
     result.pages_analyzed.append(homepage_snap)
@@ -320,7 +371,7 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
         for url in candidates:
             if url in seen:
                 continue
-            snap, soup = _fetch_and_analyze(session, url, domain, timeout, page_type)
+            snap, soup = _fetch_and_analyze(session, url, domain, timeout, page_type, result)
             if snap is not None:
                 return snap, soup
         return None, None
@@ -362,7 +413,7 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
         service_url = _find_service_page_url(homepage_soup, domain, main_keyword)
         if service_url and service_url not in seen:
             service_snap, _ = _fetch_and_analyze(
-                session, service_url, domain, timeout, "service"
+                session, service_url, domain, timeout, "service", result
             )
             if service_snap:
                 result.pages_analyzed.append(service_snap)
@@ -372,6 +423,14 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
                 seen.add(service_snap.url)
 
     # ── Phase 2: BFS for remaining page budget ─────────────────────────────
+
+    # Rate-limit fallback: if the targeted core-page phase already tripped an
+    # HTTP 429, skip the broad BFS crawl entirely. Continuing would hammer a
+    # site that's already throttling us; instead we analyze core pages only.
+    if any("HTTP 429" in e for e in result.errors):
+        result.core_pages_only = True
+        _aggregate(result)
+        return result
 
     # Seed queue from homepage links
     bfs_queue: list[str] = []
@@ -399,6 +458,11 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
             if not r.ok:
                 consecutive_errors += 1
                 result.errors.append(f"HTTP {r.status_code} on {url}")
+                # Rate-limit fallback: stop the broad crawl immediately on 429
+                # to avoid overloading the site. Core pages are already analyzed.
+                if r.status_code == 429:
+                    result.core_pages_only = True
+                    break
                 continue
             if "text/html" not in r.headers.get("Content-Type", ""):
                 continue
@@ -792,6 +856,44 @@ def _analyze_anchors(soup: BeautifulSoup, base_url: str) -> tuple[int, int, int]
 
 def _aggregate(result: CrawlResult) -> None:
     """Roll up page-level snapshots into site-level signals and score."""
+    # ── Access / read-restriction detection ──────────────────────────────
+    # Parse recorded fetch errors for HTTP status codes so the report can warn
+    # that signals may be incomplete when the site throttled or blocked us.
+    _n429 = _n403 = 0
+    for e in result.errors:
+        m = re.search(r"HTTP (\d{3})", e)
+        if not m:
+            continue
+        code = int(m.group(1))
+        if code == 429:
+            _n429 += 1
+        elif code in (401, 403):
+            _n403 += 1
+    if _n429:
+        result.rate_limited = True
+        result.issues.append(CrawlIssue(
+            category="access_hygiene",
+            severity="high",
+            detail=(
+                f"Site rate-limited the crawler (HTTP 429 on {_n429} request"
+                f"{'s' if _n429 != 1 else ''}) — indexability signals below may be "
+                "incomplete. Rate limits are enforced by request rate, so AI "
+                "crawlers (GPTBot, PerplexityBot, ClaudeBot) indexing this site can "
+                "be throttled the same way."
+            ),
+        ))
+    if _n403:
+        result.access_restricted = True
+        result.issues.append(CrawlIssue(
+            category="access_hygiene",
+            severity="high",
+            detail=(
+                f"Site returned access-restricted responses (HTTP 401/403 on "
+                f"{_n403} request{'s' if _n403 != 1 else ''}) — some pages could not "
+                "be read, so signals below may be incomplete."
+            ),
+        ))
+
     pages = result.pages_analyzed
     if not pages:
         result.health_score = 0
@@ -922,6 +1024,12 @@ def _aggregate(result: CrawlResult) -> None:
             severity="medium",
             detail="No semantic landmarks (nav, main, header, footer) detected — AI agents rely on landmarks for page structure",
         ))
+    elif result.pages_with_landmarks > 0 and result.pages_with_landmarks < result.total_pages // 2:
+        issues.append(CrawlIssue(
+            category="accessibility",
+            severity="low",
+            detail=f"Partial semantic landmark coverage ({result.pages_with_landmarks}/{result.total_pages} pages) — add nav/main/header/footer elements to remaining pages",
+        ))
 
     if result.total_images_missing_alt > 0:
         issues.append(CrawlIssue(
@@ -950,12 +1058,24 @@ def _aggregate(result: CrawlResult) -> None:
             severity="medium",
             detail="No JSON-LD or microdata schema markup detected on crawled pages",
         ))
+    elif result.schema_pages < result.total_pages // 2:
+        issues.append(CrawlIssue(
+            category="schema",
+            severity="low",
+            detail=f"Partial schema coverage ({result.schema_pages}/{result.total_pages} pages) — extend JSON-LD markup to all pages for consistent AI entity signals",
+        ))
 
     if result.authorship_pages == 0 and result.total_pages >= 3:
         issues.append(CrawlIssue(
             category="authorship",
             severity="medium",
             detail="No author bylines or Person schema detected on crawled pages",
+        ))
+    elif result.authorship_pages > 0 and result.authorship_pages < result.total_pages // 2:
+        issues.append(CrawlIssue(
+            category="authorship",
+            severity="low",
+            detail=f"Partial authorship coverage ({result.authorship_pages}/{result.total_pages} pages) — AI engines prefer consistent author signals across all content pages",
         ))
 
     if not result.has_llms_txt:
@@ -987,6 +1107,12 @@ def _aggregate(result: CrawlResult) -> None:
             category="performance",
             severity="high",
             detail=f"Slow avg response time ({result.avg_response_ms}ms) — ideal is under 3s to ensure reliable AI crawler access",
+        ))
+    elif result.avg_response_ms > 1000:
+        issues.append(CrawlIssue(
+            category="performance",
+            severity="medium",
+            detail=f"Moderate avg response time ({result.avg_response_ms}ms) — under 1s is ideal; slower responses risk AI crawler timeouts",
         ))
 
     # ── Credibility / baseline trust checks ──────────────────────────────
@@ -1328,16 +1454,23 @@ def _fetch_and_analyze(
     domain: str,
     timeout: int,
     page_type: str,
+    result: Optional["CrawlResult"] = None,
 ) -> tuple:
     """
     Fetch `url` and return (PageSnapshot, BeautifulSoup) or (None, None).
 
     The soup is returned so the caller can extract nav links for further
-    discovery without re-parsing.
+    discovery without re-parsing. When `result` is supplied, HTTP/connection
+    failures are recorded in ``result.errors`` so access restrictions
+    (rate limits, 403s) are surfaced in the report.
     """
     try:
         r = session.get(url, timeout=timeout, allow_redirects=True)
-        if not r.ok or "text/html" not in r.headers.get("Content-Type", ""):
+        if not r.ok:
+            if result is not None:
+                result.errors.append(f"HTTP {r.status_code} on {url}")
+            return None, None
+        if "text/html" not in r.headers.get("Content-Type", ""):
             return None, None
         snap = _extract_page_signals(
             r.text, r.url,
@@ -1348,7 +1481,9 @@ def _fetch_and_analyze(
         snap.page_type = page_type
         soup = BeautifulSoup(r.text, "lxml")
         return snap, soup
-    except requests.RequestException:
+    except requests.RequestException as e:
+        if result is not None:
+            result.errors.append(f"Request error on {url}: {e}")
         return None, None
 
 

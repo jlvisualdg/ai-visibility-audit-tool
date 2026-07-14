@@ -44,32 +44,48 @@ def _brand_name(domain: str, crawl_title: str = "", crawl_meta: str = "") -> str
     def _domain_match_in_text(text: str) -> str:
         """Scan text for a phrase that matches/contains the domain bare name.
 
-        Iterates from longest (5 words) to shortest (2 words) so we get the
-        full name ("Pinder Plotkin") before a partial match ("Pinder").
-        Single-word exact matches are also accepted.
+        Two-pass strategy so an exact match always wins over a partial one:
+        Pass 1 — exact: find longest phrase whose normalised form equals the domain.
+        Pass 2 — partial: find longest phrase that is an abbreviation of the domain
+                  (phrase inside domain) OR extends the domain by ≤5 chars as a prefix
+                  (e.g. "Pinder Plotkin LLC" for domain "pinderplotkin").
         Normalises title separators (|, —, -) to spaces before scanning.
         """
         normalised = re.sub(r"[|–—]", " ", text)
         words = normalised.split()
-        for length in range(min(5, len(words)), 0, -1):
-            for i in range(len(words) - length + 1):
-                phrase = " ".join(words[i:i + length])
-                if '?' in phrase or '!' in phrase:
-                    continue
-                if not (2 <= len(phrase) <= 40):
-                    continue
-                phrase_norm = re.sub(r"[^a-z]", "", phrase.lower())
-                if not phrase_norm:
-                    continue
-                # Exact full match (any length)
-                if phrase_norm == bare_domain_clean:
-                    return phrase
-                # Partial match only for 2+ word phrases to avoid single-word grabs
-                if length >= 2 and bare_domain_clean and (
-                    (len(phrase_norm) >= 4 and phrase_norm in bare_domain_clean)
-                    or (len(bare_domain_clean) >= 4 and bare_domain_clean in phrase_norm)
-                ):
-                    return phrase
+
+        def _candidates():
+            for length in range(min(5, len(words)), 0, -1):
+                for i in range(len(words) - length + 1):
+                    phrase = " ".join(words[i:i + length])
+                    if '?' in phrase or '!' in phrase:
+                        continue
+                    if not (2 <= len(phrase) <= 40):
+                        continue
+                    _pn = re.sub(r"\s*&\s*", "and", phrase.lower())
+                    phrase_norm = re.sub(r"[^a-z]", "", _pn)
+                    if phrase_norm:
+                        yield length, phrase, phrase_norm
+
+        # Pass 1: exact match at any length
+        for _, phrase, phrase_norm in _candidates():
+            if phrase_norm == bare_domain_clean:
+                return phrase
+
+        # Pass 2: partial match (longest first)
+        for length, phrase, phrase_norm in _candidates():
+            if length < 2 or not bare_domain_clean:
+                continue
+            # phrase is an abbreviation / root contained in the domain
+            if len(phrase_norm) >= 4 and phrase_norm in bare_domain_clean:
+                return phrase
+            # domain is a prefix of the phrase, extended by ≤5 chars (e.g. " LLC")
+            if (
+                len(bare_domain_clean) >= 4
+                and phrase_norm.startswith(bare_domain_clean)
+                and len(phrase_norm) - len(bare_domain_clean) <= 5
+            ):
+                return phrase
         return ""
 
     # 1a. Try title domain-match

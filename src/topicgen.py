@@ -101,26 +101,38 @@ def generate_botf_topics(
     if meta_tag:
         meta_desc = meta_tag.get("content", "")
 
-    # 3. LLM prompt for initial 5 queries
-    prompt = f"""You are analyzing a business website to generate high-intent, bottom-of-funnel search queries that a ready-to-buy customer would type into ChatGPT or Perplexity.
+    # 3. LLM prompt for initial queries
+    #
+    # This is a SIMULATION: we reverse-engineer the business's core service from
+    # its scraped homepage, then generate commercial-intent queries engineered so
+    # an AI engine responds by RECOMMENDING A LIST OF SPECIFIC COMPANIES/BRANDS.
+    # Every query must be the kind that produces a ranked roster of named vendors —
+    # that is the only signal the audit can measure. Pricing/cost and informational
+    # queries make engines explain concepts instead of naming brands, so they are banned.
+    prompt = f"""You are reverse-engineering a business from its website to run a brand-visibility simulation.
 
 BUSINESS:
 Title: {title}
 Meta: {meta_desc}
 Homepage: {body}
 
-TASK: Generate {n} queries that would lead a buyer to this company's solution.
+GOAL: First identify this business's ONE core service or product category. Then generate {n} search queries that a ready-to-buy customer would type into ChatGPT or Perplexity — queries engineered so the AI answers by RECOMMENDING A LIST OF SPECIFIC COMPANIES, BRANDS, OR PROVIDERS in that category.
 
-MANDATORY RULES — queries will be rejected if they violate ANY of these:
-1. NO brand names. NO company names. These are unbranded.
-2. USE solution-category keywords: "executive assistant matching service", "remote operator agency", "virtual assistant staffing platform" — not generic pain words like "help" or "workload"
-3. HIGH-VOLUME service keywords: target the specific service category (e.g. "virtual chief of staff" or "executive assistant agency"), not vague terms like "top talent" or "skilled operator"
-4. COMMERCIAL BOTF language only: "best X for Y", "hire a X", "X service pricing", "X company reviews", "top X agencies 2026", "cost of X", "find a X provider". NO informational queries starting with "how to..." or "what is..."
-5. 6-15 words each. Natural buyer language. No fluff.
-6. Based strictly on the services this business actually offers.
+MANDATORY RULES — a query is rejected if it violates ANY of these:
+1. NO brand names, NO company names. Queries are unbranded (the buyer does not yet know any vendor).
+2. Must reliably elicit a RANKED LIST OF NAMED VENDORS. Use recommendation phrasing:
+   "best X for Y", "top X companies/agencies/providers 2026", "leading X for Y",
+   "most recommended X services", "which X is best for Y", "find the best X provider for Y".
+3. Anchor on the specific SERVICE CATEGORY keyword (e.g. "executive assistant matching service",
+   "personal injury law firm", "managed IT provider") — never vague pain words ("help", "support").
+4. STRICTLY BANNED — these do NOT produce brand lists:
+   - Pricing/cost queries ("X pricing", "cost of X", "how much does X cost", "X rates").
+   - Informational queries ("how to...", "what is...", "why...", "guide to...").
+5. 6-15 words each. Natural commercial buyer language. No fluff.
+6. Based strictly on the core service this business actually offers.
 
-BAD examples: "how to delegate tasks", "need help managing workload", "where to get matched with top talent"
-GOOD examples: "best executive assistant matching service for founders", "top virtual EA agencies for startups 2026", "hire a remote right-hand operator pricing"
+BAD (rejected): "how to delegate tasks", "executive assistant service pricing", "cost of hiring a VA", "what is a virtual assistant"
+GOOD (accepted): "best executive assistant matching service for founders", "top virtual EA agencies for startups 2026", "leading remote chief of staff providers for CEOs", "most recommended executive assistant firms for busy founders"
 
 Return ONLY a JSON array of {n} strings. Format: ["query1", "query2", ...]"""
 
@@ -173,14 +185,14 @@ def _call_llm_for_topics(api_key: str, prompt: str, timeout: int) -> Optional[li
 
         response_json = r.json()
         _accumulate_cost(response_json)
-        raw = response_json["choices"][0]["message"]["content"].strip()
+        raw = (response_json["choices"][0]["message"].get("content") or "").strip()
         match = re.search(r"\[.*?\]", raw, re.DOTALL)
         if match:
             topics = json.loads(match.group())
             if isinstance(topics, list) and len(topics) >= 1:
                 return topics
         return None
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
+    except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
         return None
 
 
@@ -231,6 +243,20 @@ _INFORMATIONAL_RE = re.compile(
     r"^\s*(?:" + "|".join(_INFORMATIONAL_PATTERNS) + r")",
     re.IGNORECASE,
 )
+
+# Pricing/cost phrasing anywhere in a query — these make engines explain fee
+# structures instead of naming brands, so they never yield a brand recommendation.
+_PRICING_RE = re.compile(
+    r"\b(pricing|price|prices|cost|costs|rate|rates|fee|fees|cheap|"
+    r"cheapest|affordable|how\s+much|per\s+hour|per\s+month)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_brand_eliciting(query: str) -> bool:
+    """A query is brand-eliciting only if it is neither informational nor pricing-oriented."""
+    return not _INFORMATIONAL_RE.match(query) and not _PRICING_RE.search(query)
+
 
 MAX_VALIDATION_RETRIES = 2
 
@@ -329,22 +355,26 @@ def _inject_keyword_variations(
         kw_json = kw_r.json()
         _accumulate_cost(kw_json)
         main_kw = (
-            kw_json["choices"][0]["message"]["content"]
+            (kw_json["choices"][0]["message"].get("content") or "")
             .strip()
             .strip('"')
             .strip("'")
         )
         if not main_kw:
             return
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
+    except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
         return
 
-    # Step B: Generate 2 variation queries from the main keyword
+    # Step B: Generate 2 variation queries from the main keyword.
+    # These MUST elicit a list of named brands — no pricing/cost phrasing (which
+    # makes engines explain fees instead of recommending companies).
     var_prompt = (
-        f'Generate exactly 2 different bottom-of-funnel search queries built around the keyword "{main_kw}".\n'
+        f'Generate exactly 2 different commercial search queries built around the keyword "{main_kw}".\n'
         "Must be 6-15 words each, unbranded, natural commercial/buyer language.\n"
-        'Use BOTF phrasing: "best X for Y", "hire a X service", "top X agencies 2026", "X service pricing", '
-        '"cost of X for business", "find a X provider".\n'
+        "Each query must be phrased so an AI engine answers by RECOMMENDING A LIST OF SPECIFIC "
+        "COMPANIES/BRANDS. Use phrasing like: \"best X for Y\", \"top X companies/agencies 2026\", "
+        '"leading X providers for Y", "most recommended X services", "which X is best for Y".\n'
+        "BANNED: pricing/cost queries and informational (how/what/why) queries — they do not yield brand lists.\n"
         "The two queries should use DIFFERENT phrasings and angles — do not just swap one word.\n"
         "Do NOT include the brand name or any specific company name.\n"
         'Return ONLY a JSON array of 2 strings. Example: ["query one here", "query two here"]'
@@ -370,7 +400,7 @@ def _inject_keyword_variations(
 
         var_json = var_r.json()
         _accumulate_cost(var_json)
-        var_raw = var_json["choices"][0]["message"]["content"].strip()
+        var_raw = (var_json["choices"][0]["message"].get("content") or "").strip()
         var_match = re.search(r"\[.*?\]", var_raw, re.DOTALL)
         if var_match:
             variations = json.loads(var_match.group())
@@ -378,27 +408,28 @@ def _inject_keyword_variations(
                 # Slot into positions [0] and [2]
                 topics[0] = variations[0]
                 topics[2] = variations[1]
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
+    except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
         return
 
 
 def _hard_filter_informational(topics: list[str], n: int) -> list[str]:
-    """Remove any remaining informational queries after LLM validation retries.
+    """Replace any query that won't elicit a brand list (informational OR pricing).
 
-    Returns the same list with informational entries replaced by generic
-    BOTF placeholders so we always have n topics.
+    Runs after LLM validation retries as a hard backstop. Non-brand-eliciting
+    entries are swapped for generic ranking-style placeholders so we always
+    return n brand-eliciting topics.
     """
     _GENERIC_BOTF = [
         "best service providers in this category 2026",
-        "top rated solutions in this industry",
-        "hire a professional service provider near me",
-        "find a reliable service agency online",
+        "top rated companies in this industry",
+        "most recommended providers for this type of service",
+        "leading agencies to hire in this space",
     ]
     result = []
     generic_idx = 0
     for t in topics:
-        if _INFORMATIONAL_RE.match(t):
-            # Replace with a generic BOTF query
+        if not _is_brand_eliciting(t):
+            # Replace with a generic ranking-style query
             result.append(_GENERIC_BOTF[generic_idx % len(_GENERIC_BOTF)])
             generic_idx += 1
         else:
@@ -439,14 +470,14 @@ def _extract_city(title: str, body_excerpt: str, api_key: str, timeout: int) -> 
             return None
         resp = r.json()
         _accumulate_cost(resp)
-        city = resp["choices"][0]["message"]["content"].strip().strip('"').strip("'").strip(".")
+        city = (resp["choices"][0]["message"].get("content") or "").strip().strip('"').strip("'").strip(".")
         # Sanity check: should be 1-3 words, no punctuation beyond comma
         if city and 2 <= len(city) <= 30 and "\n" not in city:
             # Strip trailing state or country additions (e.g. "Baltimore, MD" → "Baltimore")
             city = city.split(",")[0].strip()
             return city if city else None
         return None
-    except (requests.RequestException, json.JSONDecodeError, KeyError):
+    except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
         return None
 
 
@@ -508,28 +539,28 @@ def _fallback_topics(domain: str, n: int, homepage_html: str = "", api_key: str 
                     )
                     if kw_r.ok:
                         service_keyword = (
-                            kw_r.json()["choices"][0]["message"]["content"]
+                            (kw_r.json()["choices"][0]["message"].get("content") or "")
                             .strip().strip('"').strip("'").strip(".")
                         )
-                except (requests.RequestException, json.JSONDecodeError, KeyError):
+                except (requests.RequestException, json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
                     pass
         except Exception:
             pass
 
-    # If we got a service keyword, build unbranded queries around it
+    # If we got a service keyword, build unbranded brand-eliciting queries around it
     if service_keyword and len(service_keyword) > 2:
         kw = service_keyword.lower()
         return [
-            f"best {kw} for women",
-            f"top {kw} providers 2026",
-            f"find a {kw} provider online",
-            f"{kw} service pricing and reviews",
+            f"best {kw} companies for businesses 2026",
+            f"top {kw} providers to consider",
+            f"most recommended {kw} services",
+            f"leading {kw} agencies to hire",
         ][:n]
 
-    # Last resort: generic commercial queries (still unbranded)
+    # Last resort: generic commercial queries (still unbranded, brand-eliciting)
     return [
-        "best online service providers for this category",
-        "top rated solutions in this industry 2026",
-        "find a provider for this type of service",
-        "service pricing and reviews comparison",
+        "best service providers in this category 2026",
+        "top rated companies in this industry",
+        "most recommended providers for this type of service",
+        "leading agencies to hire in this space",
     ][:n]

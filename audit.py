@@ -185,6 +185,7 @@ def _build_citation_matrix_from_results(
     results: list[dict],
     domain: str,
     topics: list[str],
+    target_brand_name: str = "",
 ) -> "CitationMatrix":
     """Convert flat v2.0 results into a CitationMatrix the template expects.
 
@@ -208,6 +209,8 @@ def _build_citation_matrix_from_results(
     matrix = CitationMatrix(domain=domain, topics=topics, engines=engines)
 
     target_tokens = _extract_target_tokens(domain)
+    if target_brand_name and target_brand_name not in target_tokens:
+        target_tokens.append(target_brand_name)
 
     for r in results:
         engine_key = _ENGINE_DISPLAY_TO_LOWERCASE.get(r["engine"], r["engine"].lower())
@@ -309,34 +312,34 @@ def _build_citation_matrix_from_results(
         )
         matrix.results.append(tr)
 
-    # Build all_competitors — count non-target brand appearances across all results
+    # Build all_competitors — count non-target brand appearances across all
+    # results — and a brand->URL map from the LLM extraction (first URL wins).
     competitor_counts: dict[str, int] = {}
+    brand_urls: dict[str, str] = {}
     for r in results:
+        r_urls = r.get("brand_urls", {}) or {}
         for b in r.get("brand_mentions", []) or []:
             if _is_target_brand(b, target_tokens):
                 continue
             competitor_counts[b] = competitor_counts.get(b, 0) + 1
+            if b not in brand_urls and r_urls.get(b):
+                brand_urls[b] = r_urls[b]
     matrix.all_competitors = dict(
         sorted(competitor_counts.items(), key=lambda x: -x[1])
     )
+    matrix.brand_urls = brand_urls
 
     return matrix
 
 
 def _is_target_brand(brand: str, target_tokens: list[str]) -> bool:
-    """Return True if brand matches the target domain tokens."""
-    import re
-    if not target_tokens:
-        return False
-    brand_norm = brand.lower().strip()
-    brand_norm = re.sub(r"\s*(?:&|and)\s*", " ", brand_norm)
-    brand_norm = " ".join(brand_norm.split())
-    for token in target_tokens:
-        token_norm = re.sub(r"\s*(?:&|and)\s*", " ", token.lower())
-        token_norm = " ".join(token_norm.split())
-        if token_norm in brand_norm or brand_norm in token_norm:
-            return True
-    return False
+    """Return True if brand is the target, tolerant of suffix/spacing/case.
+
+    Delegates to the shared fuzzy matcher so "Pinder Plotkin" (AI response),
+    "Pinder Plotkin LLC" (website), and "pinderplotkin" (domain) all match.
+    """
+    from src.scoring import _fuzzy_target_match
+    return _fuzzy_target_match(brand, target_tokens)
 
 
 def _domain_contains_citation(citation: str, target_domain: str) -> bool:
@@ -351,7 +354,7 @@ def _domain_contains_citation(citation: str, target_domain: str) -> bool:
 # v2.0 — Derive additional variables for the report
 # ---------------------------------------------------------------------------
 
-def _derive_v2_variables(results: list[dict], aggregate: dict, domain: str) -> dict:
+def _derive_v2_variables(results: list[dict], aggregate: dict, domain: str, target_brand_name: str = "") -> dict:
     """Compute v2.0 report variables from results and aggregate metrics.
 
     Returns a dict with:
@@ -359,6 +362,8 @@ def _derive_v2_variables(results: list[dict], aggregate: dict, domain: str) -> d
         topics_to_optimize, global_priorities
     """
     target_tokens = _extract_target_tokens(domain)
+    if target_brand_name and target_brand_name not in target_tokens:
+        target_tokens.append(target_brand_name)
 
     # --- top_3_brands: top 3 non-target brands by cumulative mentions ---
     brand_counts: dict[str, int] = {}
@@ -525,6 +530,11 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         progress.update(task, advance=1)
         console.print(f"  [dim]Topics: {', '.join(topics)}[/]")
 
+        # Website-derived brand name — canonical form used for target matching
+        # and normalized display throughout the report.
+        from src.reporter import _brand_name
+        crawl_brand = _brand_name(domain, getattr(crawl, 'title', ''), getattr(crawl, 'meta_description', ''))
+
         # ── 3. AI visibility — v2.0 pipeline ──
         skip_ai = no_ai
         progress.update(task, description="[cyan]Checking AI visibility (v2.0)...")
@@ -536,9 +546,6 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         else:
             try:
                 from src.collector import execute_all
-                # Extract brand name from crawl for better target matching
-                from src.reporter import _brand_name
-                crawl_brand = _brand_name(domain, getattr(crawl, 'title', ''), getattr(crawl, 'meta_description', ''))
                 results = execute_all(topics, domain, target_brand_name=crawl_brand)
             except Exception as e:
                 console.print(f"  [yellow]AI check failed ({e}), falling back to mock data[/]")
@@ -569,14 +576,14 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         )
 
         # ── 5. Build CitationMatrix for template compatibility ──
-        matrix = _build_citation_matrix_from_results(results, domain, topics)
+        matrix = _build_citation_matrix_from_results(results, domain, topics, crawl_brand)
 
         # ── 6. Analyze + report ──
         progress.update(task, description="[cyan]Building report...")
         report = analyze(crawl, matrix, topics=topics)
 
         # ── 7. Derive v2.0 variables ──
-        v2 = _derive_v2_variables(results, aggregate, domain)
+        v2 = _derive_v2_variables(results, aggregate, domain, crawl_brand)
         progress.update(task, advance=1)
 
     # Term Ownership: count of queries where target has zero presence
@@ -614,13 +621,19 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
     # ── Cost summary ──
     engine_cost = sum(r.get("cost_usd", 0.0) for r in results)
     topicgen_cost = 0.0
+    brand_cost = 0.0
     if not skip_ai:
         try:
             from src.topicgen import get_topicgen_cost
             topicgen_cost = get_topicgen_cost()
         except Exception:
             pass
-    total_cost = engine_cost + topicgen_cost
+        try:
+            from src.brand_extract import get_brand_extract_cost
+            brand_cost = get_brand_extract_cost()
+        except Exception:
+            pass
+    total_cost = engine_cost + topicgen_cost + brand_cost
 
     console.print()
     from src.aeo_score import score_label
@@ -633,7 +646,7 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
     console.print(f"[green]✓[/] Best Model:     [bold]{aggregate['best_model']}[/]")
     console.print(f"[green]✓[/] Best Topic:     [bold]{aggregate['best_topic']}[/]")
     if not skip_ai:
-        console.print(f"[green]✓[/] API Cost:       [bold]${total_cost:.4f}[/]  (engines ${engine_cost:.4f} + topics ${topicgen_cost:.4f})")
+        console.print(f"[green]✓[/] API Cost:       [bold]${total_cost:.4f}[/]  (engines ${engine_cost:.4f} + topics ${topicgen_cost:.4f} + brands ${brand_cost:.4f})")
     console.print(f"[green]✓[/] Report:         [link=file://{output_path}]{output_path}[/]")
     console.print()
     console.print(f"[dim]Open in browser: open {output_path}[/]")

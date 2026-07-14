@@ -413,6 +413,51 @@ body {
     margin-bottom: 24px;
 }
 
+/* Incomplete-data notice */
+.data-warning {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    background: rgba(232, 161, 58, 0.10);
+    border: 1px solid rgba(232, 161, 58, 0.35);
+    border-left: 4px solid var(--warning-500);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 24px;
+}
+.data-warning-icon {
+    font-size: 20px;
+    line-height: 1.3;
+    flex-shrink: 0;
+}
+.data-warning-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--warning-500);
+    margin-bottom: 6px;
+}
+.data-warning-body p {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.82);
+    margin: 0 0 8px;
+}
+.data-warning-note {
+    color: rgba(255, 255, 255, 0.62) !important;
+    font-size: 12.5px !important;
+}
+.data-warning-list {
+    margin: 0 0 8px;
+    padding-left: 20px;
+}
+.data-warning-list li {
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.82);
+    margin-bottom: 3px;
+}
+
 .diagnostic-grid {
     display: grid;
     grid-template-columns: 1fr 1fr auto;
@@ -774,6 +819,16 @@ body {
     text-overflow: ellipsis;
 }
 
+.top-brand-link {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px dotted var(--blue-200);
+}
+.top-brand-link:hover {
+    color: var(--brand-primary);
+    border-bottom-color: var(--brand-primary);
+}
+
 .top-brand-citations {
     font-size: 12px;
     color: var(--text-muted);
@@ -1016,6 +1071,15 @@ body {
     border-radius: 100px;
     font-size: 11px;
     font-weight: 700;
+}
+
+.hit-badge--link {
+    text-decoration: none;
+    cursor: pointer;
+}
+.hit-badge--link:hover {
+    filter: brightness(0.92);
+    text-decoration: underline;
 }
 
 .miss-badge {
@@ -1489,6 +1553,30 @@ body {
         {% endif %}
     </div>
 
+    {# ── Incomplete-data notice — shown only when the site restricted our crawler ── #}
+    {% if report.crawl_signals and report.crawl_signals.data_incomplete %}
+    <div class="data-warning">
+        <div class="data-warning-icon">⚠</div>
+        <div class="data-warning-body">
+            <div class="data-warning-title">Some data may be incomplete</div>
+            <p><strong>{{ report.domain }}</strong> restricted automated access during this audit, so the indexability signals below reflect only the {{ report.crawl_signals.total_pages }} page{{ 's' if report.crawl_signals.total_pages != 1 else '' }} we were able to read.{% if report.crawl_signals.core_pages_only %} To avoid overloading the site, the broad page crawl was stopped and analysis was limited to its core pages (home, about, contact, and primary service page).{% endif %}</p>
+            {% if report.crawl_signals.access_error_summary %}
+            <ul class="data-warning-list">
+                {% for item in report.crawl_signals.access_error_summary %}
+                <li>{{ item }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            {% if report.crawl_signals.rate_limited %}
+            <p class="data-warning-note">Rate limits are enforced by request rate rather than by identity, so AI crawlers (GPTBot, PerplexityBot, ClaudeBot) fetching this site can be throttled the same way.</p>
+            {% endif %}
+            {% if report.crawl_signals.robots_blocks_ai %}
+            <p class="data-warning-note">The site's robots.txt also explicitly blocks {{ report.crawl_signals.ai_bots_blocked }} of {{ report.crawl_signals.ai_bots_blocked + report.crawl_signals.ai_bots_allowed }} tracked AI crawlers — AI engines face the same restriction when indexing this site.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
     <div class="diagnostic-grid">
         {# Strengths #}
         <div class="diagnostic-section">
@@ -1659,18 +1747,21 @@ body {
         <div class="section-header-icon">🏆</div>
         <div class="section-header-content">
             <h2 class="section-title">TOP Recommended Brands</h2>
-            <p class="section-subtitle">The top 3 most-cited competitors across all queries</p>
+            <p class="section-subtitle">The top 3 brands recommended by AI engines across all queries</p>
         </div>
     </div>
 
     <div class="top-brands">
         {% for domain, count in report.citation_matrix.all_competitors.items() %}
             {% if loop.index <= 3 %}
+            {% set burl = report.citation_matrix.brand_urls.get(domain) %}
             <div class="top-brand-item {{ 'top-brand-first' if loop.index == 1 else '' }}">
                 <div class="top-brand-rank">{{ loop.index }}</div>
                 <div class="top-brand-info">
-                    <div class="top-brand-name">{{ domain }}</div>
-                    <div class="top-brand-citations">{{ count }} citation{{ 's' if count != 1 else '' }}</div>
+                    <div class="top-brand-name">
+                        {% if burl %}<a href="https://{{ burl }}" target="_blank" rel="noopener" class="top-brand-link">{{ domain }}</a>{% else %}{{ domain }}{% endif %}
+                    </div>
+                    <div class="top-brand-citations">{{ count }} recommendation{{ 's' if count != 1 else '' }}{% if burl %} · {{ burl }}{% endif %}</div>
                 </div>
             </div>
             {% endif %}
@@ -1710,7 +1801,7 @@ body {
                 <tr class="row-{{ eng_key }}">
                     <td class="engine-cell"><span class="engine-pill engine-pill--{{ eng_key }}">{{ result.engine|replace(' (mock)', '') }}</span></td>
                     <td>{{ result.topic }}</td>
-                    <td>{% if result.target_brand_position == 1 %}<span class="matrix-cell-brand">{{ brand_name }}</span>{% elif result.top_competitor %}<span class="hit-badge">{{ result.top_competitor }}</span>{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}</td>
+                    <td>{% if result.target_brand_position == 1 %}<span class="matrix-cell-brand">{{ brand_name }}</span>{% elif result.top_competitor %}{% set tc_url = report.citation_matrix.brand_urls.get(result.top_competitor) %}{% if tc_url %}<a href="https://{{ tc_url }}" target="_blank" rel="noopener" class="hit-badge hit-badge--link">{{ result.top_competitor }}</a>{% else %}<span class="hit-badge">{{ result.top_competitor }}</span>{% endif %}{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}</td>
                     <td>{{ result.best_brand_mentions }}x</td>
                     <td>{{ result.best_url_citations }}x</td>
                     <td>{% if result.target_brand_position %}<strong>#{{ result.target_brand_position }}</strong>{% elif result.covered %}<span style="color:var(--text-muted)">cited</span>{% else %}—{% endif %}</td>
