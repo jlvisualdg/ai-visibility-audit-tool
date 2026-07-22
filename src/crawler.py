@@ -219,6 +219,8 @@ class CrawlResult:
     answer_capsules: int = 0
     stat_density: float = 0.0
     authorship_pages: int = 0
+    blog_page_count: int = 0           # pages with blog/post/article URL pattern
+    blog_pages_with_authorship: int = 0
     schema_pages: int = 0
     health_score: int = 0
     total_word_count: int = 0
@@ -1310,6 +1312,10 @@ def _aggregate(result: CrawlResult) -> None:
     # Rollups
     result.answer_capsules = sum(p.answer_capsules for p in pages)
     result.authorship_pages = sum(1 for p in pages if p.has_authorship)
+    _BLOG_PATH_RE = re.compile(r"/(blog|post|article|news|story|insight|resource)/", re.I)
+    blog_pages = [p for p in pages if _BLOG_PATH_RE.search(urlparse(p.url).path)]
+    result.blog_page_count = len(blog_pages)
+    result.blog_pages_with_authorship = sum(1 for p in blog_pages if p.has_authorship)
     result.schema_pages = sum(1 for p in pages if p.has_schema)
     result.total_word_count = sum(p.word_count for p in pages)
 
@@ -1399,12 +1405,41 @@ def _aggregate(result: CrawlResult) -> None:
         result.pages_with_landmarks = sum(1 for p in pages if p.semantic_landmarks > 0)
         result.total_images_missing_alt = sum(p.images_total - p.images_with_alt for p in pages)
 
-    # People extraction from about page
+    # People extraction — about page + person-specific /about-* pages in the nav
     about_snap_for_people = next((p for p in pages if p.page_type == "about"), None)
     if about_snap_for_people and about_snap_for_people.raw_html:
         from bs4 import BeautifulSoup as _BS
         about_soup = _BS(about_snap_for_people.raw_html, "lxml")
         result.people = _extract_people(about_soup, about_snap_for_people.url)
+
+    # Also scan homepage nav for person-specific pages (e.g. /about-dr-john)
+    homepage_snap_for_people = next((p for p in pages if p.page_type == "homepage"), None)
+    if homepage_snap_for_people and homepage_snap_for_people.raw_html:
+        from bs4 import BeautifulSoup as _BS
+        hp_soup = _BS(homepage_snap_for_people.raw_html, "lxml")
+        _person_page_re = re.compile(r"/about-[a-z]", re.I)
+        _seen_person_urls: set[str] = {about_snap_for_people.url} if about_snap_for_people else set()
+        for _a in hp_soup.find_all("a", href=True):
+            _href = _a["href"].strip()
+            if not _href:
+                continue
+            if _person_page_re.search(_href):
+                _abs = urljoin(result.homepage_url, _href).split("#")[0]
+                if _is_internal(_abs, result.domain) and _abs not in _seen_person_urls:
+                    _seen_person_urls.add(_abs)
+                    try:
+                        import requests as _req
+                        _r = _req.get(_abs, headers=DEFAULT_HEADERS, timeout=10)
+                        if _r.ok:
+                            _ps = _BS(_r.text, "lxml")
+                            _extra = _extract_people(_ps, _abs)
+                            _existing_names = {p.name.lower() for p in result.people}
+                            for _p in _extra:
+                                if _p.name.lower() not in _existing_names:
+                                    result.people.append(_p)
+                                    _existing_names.add(_p.name.lower())
+                    except Exception:
+                        pass
 
     # People counts for NEEATT scoring (set here for report template access)
     result.people_with_bios = sum(1 for p in result.people if p.has_bio)
@@ -1845,47 +1880,68 @@ def _check_robots_txt(domain: str, timeout: int = 10) -> dict:
     except requests.RequestException:
         return out
 
-    bot_decisions: dict[str, bool] = {}  # True=blocked, False=allowed
+    # Two-pass parse: collect (agent, directive, value) tuples, then resolve.
+    # Consecutive User-agent: lines before any directive form a group.
+    # Specific bot rules take precedence over wildcard (*) rules.
+    wildcard_blocked = False
+    wildcard_allowed = False
+    bot_decisions: dict[str, bool] = {}  # True=blocked, False=allowed; specific beats wildcard
 
     current_agents: list[str] = []
+    in_agent_header = False
     for raw_line in out["text"].splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line:
+            # Blank line ends the current group
+            current_agents = []
+            in_agent_header = False
             continue
         if line.lower().startswith("user-agent:"):
-            current_agents = [line.split(":", 1)[1].strip()]
+            agent = line.split(":", 1)[1].strip()
+            if not in_agent_header:
+                current_agents = []
+                in_agent_header = True
+            current_agents.append(agent)
         elif line.lower().startswith("disallow:"):
+            in_agent_header = False
             value = line.split(":", 1)[1].strip()
-            if value in ("/", ""):
+            if value == "/":  # empty Disallow means "allow all" — not a block
                 for agent in current_agents:
                     if agent == "*":
-                        out["blocks_ai"] = True
-                        for bot in AI_BOT_USER_AGENTS:
-                            if bot not in bot_decisions:
-                                bot_decisions[bot] = True
-                    elif agent in AI_BOT_USER_AGENTS:
-                        out["blocks_ai"] = True
-                        bot_decisions[agent] = True
-                    if agent == DEFAULT_HEADERS["User-Agent"].split(" ")[0] or agent == "*":
-                        out["blocks_self"] = True
+                        wildcard_blocked = True
+                        if agent == DEFAULT_HEADERS["User-Agent"].split(" ")[0]:
+                            out["blocks_self"] = True
+                    else:
+                        if agent in AI_BOT_USER_AGENTS:
+                            bot_decisions[agent] = True
+                        audit_agent = DEFAULT_HEADERS["User-Agent"].split(" ")[0]
+                        if agent == audit_agent:
+                            out["blocks_self"] = True
         elif line.lower().startswith("allow:"):
+            in_agent_header = False
             value = line.split(":", 1)[1].strip()
             if value in ("/", ""):
                 for agent in current_agents:
                     if agent == "*":
-                        for bot in AI_BOT_USER_AGENTS:
-                            if bot not in bot_decisions:
-                                bot_decisions[bot] = False
+                        wildcard_allowed = True
                     elif agent in AI_BOT_USER_AGENTS:
-                        if agent not in bot_decisions:
-                            bot_decisions[agent] = False
+                        bot_decisions[agent] = False  # specific allow overrides wildcard
+
+    # Apply wildcard to bots that have no specific rule
+    for bot in AI_BOT_USER_AGENTS:
+        if bot not in bot_decisions:
+            if wildcard_blocked and not wildcard_allowed:
+                bot_decisions[bot] = True  # blocked by wildcard
+            # else: implicitly allowed (wildcard allow or no wildcard)
 
     out["ai_bots_blocked"] = sum(1 for v in bot_decisions.values() if v)
     out["ai_bots_allowed"] = sum(1 for v in bot_decisions.values() if not v)
+    out["blocks_ai"] = out["ai_bots_blocked"] > 0
+    out["blocks_self"] = out.get("blocks_self", False)
 
     # If robots.txt exists but has no explicit AI bot directives at all,
     # all bots are implicitly allowed (no blocks = all green).
-    if not bot_decisions and not out["blocks_ai"]:
+    if not bot_decisions:
         out["ai_bots_allowed"] = len(AI_BOT_USER_AGENTS)
 
     return out

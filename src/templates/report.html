@@ -1220,14 +1220,14 @@ body {
    SECTION 2 — THE DIAGNOSTIC
    ==================================================================== #}
 <section class="diagnostic">
-    <div class="diagnostic-label">The Diagnostic &mdash; BE THE ANSWER&reg; AEO Score</div>
+    <div class="diagnostic-label">The Diagnostic &mdash; AEO Score</div>
     <div class="diagnostic-conclusion {{ aeo_color_class }}">{{ aeo_score }}/100 &mdash; {{ aeo_label }}</div>
 
     <div class="aeo-score-hero">
         <div class="aeo-score-ring">
             <div class="aeo-score-value {{ aeo_color_class }}">{{ aeo_score }}<span style="font-size:32px;font-weight:400;color:rgba(255,255,255,0.35)">/100</span></div>
             <div class="aeo-score-meta">
-                <span class="aeo-score-label">BE THE ANSWER&reg; AEO Score</span>
+                <span class="aeo-score-label">AEO Score</span>
                 <span class="aeo-score-tier {{ aeo_color_class }}">{{ aeo_label }}</span>
             </div>
         </div>
@@ -1559,18 +1559,24 @@ body {
             <div class="cred-card-desc">Years in business, project counters (Experience)</div>
         </div>
 
-        {# Expertise — authorship #}
-        {% if cs.authorship_pages > 0 %}
-            {% set auth_ratio = cs.authorship_pages / [cs.total_pages, 1]|max %}
-            {% if auth_ratio >= 0.5 %}{% set auth_status = 'ok' %}{% else %}{% set auth_status = 'warn' %}{% endif %}
+        {# Expertise — authorship (blog content only) / publisher metadata fallback #}
+        {% set blog_total = cs.blog_page_count|default(0) %}
+        {% set blog_auth = cs.blog_pages_with_authorship|default(0) %}
+        {% set has_pub = "WebSite not linked" not in (cs.schema_missing_props|join(" ")) and "WebSite schema missing" not in (cs.schema_missing_props|join(" ")) %}
+        {% if blog_total > 0 %}
+            {% if blog_auth == blog_total %}{% set auth_status = 'ok' %}
+            {% elif blog_auth > 0 %}{% set auth_status = 'warn' %}
+            {% else %}{% set auth_status = 'bad' %}{% endif %}
+            {% set auth_display = blog_auth|string + '/' + blog_total|string + ' blog posts' %}
         {% else %}
-            {% set auth_status = 'bad' %}
+            {% set auth_status = 'ok' if has_pub else 'warn' %}
+            {% set auth_display = 'Publisher declared' if has_pub else 'No publisher in schema' %}
         {% endif %}
         <div class="cred-card cred-card--{{ auth_status }}">
             <div class="cred-card-icon">&#x1F464;</div>
-            <div class="cred-card-value cred-card-value--{{ auth_status }}">{{ cs.authorship_pages }}/{{ cs.total_pages }}</div>
-            <div class="cred-card-label">Author Bylines</div>
-            <div class="cred-card-desc">Pages with visible author or Person schema (Expertise)</div>
+            <div class="cred-card-value cred-card-value--{{ auth_status }}">{{ auth_display }}</div>
+            <div class="cred-card-label">Author / Publisher</div>
+            <div class="cred-card-desc">{% if blog_total > 0 %}Blog posts with author byline (Expertise){% else %}Publisher declared in schema metadata (Expertise){% endif %}</div>
         </div>
 
         {# Expertise — team/people #}

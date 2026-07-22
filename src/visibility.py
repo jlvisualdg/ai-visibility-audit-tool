@@ -459,8 +459,10 @@ def build_citation_matrix(
             result = TopicResult(topic=topic, engine=engine.name, pass_count=passes)
             for _ in range(passes):
                 er = engine.query(topic)
-                # Determine if target domain is in this pass's citations
-                if _target_in(er.citations, target=target_norm):
+                # Citation = domain URL present in citations array OR in raw answer text
+                if _target_in(er.citations, target=target_norm) or (
+                    target_norm and target_norm in er.text.lower()
+                ):
                     result.covered = True
                 result.passes.append(er)
                 time.sleep(0.2)  # polite delay between calls
@@ -495,16 +497,30 @@ def build_citation_matrix(
 
             matrix.results.append(result)
 
-    # Build competitor frequency map across all cells
+    # Build competitor frequency map from brand NAME mentions across all passes.
+    # This drives "TOP Recommended Brands" — a recommendation is a brand name
+    # appearing in the answer text, not just a URL citation.
     competitor_counts: dict[str, int] = {}
+    competitor_urls: dict[str, str] = {}
     for r in matrix.results:
-        for src in r.cited_sources:
-            if _normalize_domain_for_match(src) == target_norm:
-                continue  # don't count self
-            competitor_counts[src] = competitor_counts.get(src, 0) + 1
+        seen_in_cell: set[str] = set()
+        for er in r.passes:
+            for comp in er.competitors:
+                name = comp.get("name", "").strip()
+                if not name:
+                    continue
+                name_lower = name.lower()
+                if _normalize_domain_for_match(name_lower) == target_norm:
+                    continue  # skip self
+                competitor_counts[name] = competitor_counts.get(name, 0) + 1
+                if comp.get("url") and name not in competitor_urls:
+                    parsed_url = _domain_from_url(comp["url"])
+                    if parsed_url:
+                        competitor_urls[name] = parsed_url
     matrix.all_competitors = dict(
         sorted(competitor_counts.items(), key=lambda x: -x[1])
     )
+    matrix.brand_urls = competitor_urls
 
     return matrix
 
