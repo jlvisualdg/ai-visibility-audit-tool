@@ -96,7 +96,8 @@ AI_BOT_USER_AGENTS = [
 
 
 # Targeted crawl — path candidates for each page type
-_ABOUT_PATHS = ["/about", "/about-us", "/company", "/our-story", "/team", "/who-we-are"]
+_ABOUT_PATHS = ["/about", "/about-us", "/company", "/our-story", "/team", "/who-we-are",
+                "/leadership", "/our-team", "/people", "/founders", "/founder"]
 _CONTACT_PATHS = ["/contact", "/contact-us", "/get-in-touch", "/reach-us", "/support", "/help"]
 
 # URL path patterns that suggest a service/product page
@@ -123,10 +124,26 @@ _PHONE_RE = re.compile(
     r"(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}"
 )
 
+# Credentials/degree keywords for people extraction
+_CREDENTIALS_RE = re.compile(
+    r"\b(phd|ph\.d|md|m\.d|cpa|cfa|mba|licensed|certified|degree|j\.?d\.?|esq)\b",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class PersonSignal:
+    """A person found on a crawled page."""
+    name: str
+    role: str = ""
+    has_bio: bool = False
+    has_credentials: bool = False  # mentions degrees, licenses, certifications
+    source_url: str = ""
 
 
 @dataclass
@@ -172,6 +189,16 @@ class PageSnapshot:
     has_trust_signals: bool = False  # testimonials, reviews, client logos
     has_social_links: bool = False
     social_channel_count: int = 0
+    # Schema quality signals
+    schema_quality_score: int = 0
+    schema_missing_props: list[str] = field(default_factory=list)
+    # NEEATT-specific signals (populated by _extract_credibility_signals)
+    has_media_mentions: bool = False
+    has_stat_counters: bool = False
+    has_ratings_widget: bool = False
+    has_corp_registration: bool = False
+    # Raw HTML for targeted pages (about/homepage only) — used for people extraction
+    raw_html: str = field(default="", repr=False)
 
 
 @dataclass
@@ -238,6 +265,25 @@ class CrawlResult:
     has_social_links: bool = False
     social_channel_count: int = 0
     credibility_score: int = 0
+    # NEEATT sub-scores (0-100 each, populated in _compute_credibility_score)
+    neeatt_notability: int = 0
+    neeatt_experience: int = 0
+    neeatt_expertise: int = 0
+    neeatt_authoritativeness: int = 0
+    neeatt_trustworthiness: int = 0
+    neeatt_transparency: int = 0
+    # Derived signals for report display
+    has_media_mentions: bool = False     # "as seen on" / press logos on homepage
+    has_stat_counters: bool = False      # "1,200+ projects" style counters
+    has_ratings_widget: bool = False     # Trustpilot / Google rating widget
+    has_corp_registration: bool = False  # EIN, LLC, incorporation mention
+    people_with_bios: int = 0           # count of people with bios (from people list)
+    people_with_credentials: int = 0    # count of people with credential keywords
+    # Schema quality (from homepage)
+    schema_quality_score: int = 0
+    schema_missing_props: list[str] = field(default_factory=list)
+    # People found on about page
+    people: list[PersonSignal] = field(default_factory=list)
 
     @property
     def total_pages(self) -> int:
@@ -389,6 +435,23 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
         about_candidates += [f"https://{domain}{p}" for p in _ABOUT_PATHS]
 
         about_snap, _ = _targeted_fetch(about_candidates, "about")
+
+        # Last resort: scan footer links for about-like pages
+        if about_snap is None and homepage_soup is not None:
+            footer = homepage_soup.find("footer")
+            if footer:
+                for a in footer.find_all("a", href=True):
+                    href = a["href"].strip()
+                    if not href:
+                        continue
+                    text = a.get_text(" ", strip=True).lower()
+                    if any(kw in text or kw in href.lower() for kw in ("about", "team", "people", "story", "who we are")):
+                        abs_url = urljoin(result.homepage_url, href).split("#")[0]
+                        if _is_internal(abs_url, result.domain) and abs_url not in seen:
+                            about_snap, _ = _fetch_and_analyze(session, abs_url, domain, timeout, "about", result)
+                            if about_snap:
+                                break
+
         if about_snap:
             result.pages_analyzed.append(about_snap)
             result.pages_crawled += 1
@@ -705,6 +768,9 @@ def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms:
 
     # Schema + schema types
     snap.has_schema, snap.schema_types = _has_schema_with_types(soup)
+    schema_analysis = _analyze_schema_graph(soup)
+    snap.schema_quality_score = schema_analysis["quality_score"]
+    snap.schema_missing_props = schema_analysis["missing_props"]
 
     # Anchor text + internal links
     snap.internal_links, snap.missing_anchor_text, snap.broken_links_on_page = _analyze_anchors(soup, url)
@@ -720,6 +786,10 @@ def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms:
     snap.has_trust_signals = cred["has_trust_signals"]
     snap.has_social_links = cred["has_social_links"]
     snap.social_channel_count = cred.get("social_channel_count", 0)
+    snap.has_media_mentions = cred.get("has_media_mentions", False)
+    snap.has_stat_counters = cred.get("has_stat_counters", False)
+    snap.has_ratings_widget = cred.get("has_ratings_widget", False)
+    snap.has_corp_registration = cred.get("has_corp_registration", False)
 
     return snap
 
@@ -824,6 +894,334 @@ def _has_schema(soup: BeautifulSoup) -> bool:
     """Legacy wrapper."""
     has, _ = _has_schema_with_types(soup)
     return has
+
+
+# Known LocalBusiness subtypes (non-exhaustive but covers common ones)
+_LOCAL_BUSINESS_SUBTYPES = {
+    "localbusiness", "restaurant", "foodestablishment", "store", "hotel",
+    "lodgingbusiness", "dentist", "physician", "medicalorganization",
+    "hospital", "pharmacy", "accountingservice", "financialservice",
+    "realestate", "realestateagent", "legalservice", "lawyer",
+    "autodealer", "autorepair", "beautysalon", "hairsalon", "spa",
+    "gym", "fitnesscenter", "library", "museum", "park",
+    "professionaleservice", "homegoodsstore", "clothingstore",
+    "electronicsstore", "florist", "movingcompany", "plumber",
+    "electrician", "generalcontractor", "roofingcontractor",
+    "insuranceagency", "travelagency", "veterinarycare",
+}
+
+
+def _analyze_schema_graph(soup: BeautifulSoup) -> dict:
+    """
+    Parse all JSON-LD script tags and score the entity graph quality.
+
+    Returns:
+        {
+            "quality_score": int (0-100),
+            "entities": list[str],        # deduped @type values found
+            "missing_props": list[str],   # human-readable descriptions of absences
+        }
+    """
+    # Collect all entity objects from JSON-LD
+    entities: list[dict] = []
+
+    def _collect_entities(obj):
+        if isinstance(obj, dict):
+            if "@type" in obj:
+                entities.append(obj)
+            if "@graph" in obj and isinstance(obj["@graph"], list):
+                for item in obj["@graph"]:
+                    _collect_entities(item)
+            for v in obj.values():
+                if isinstance(v, dict):
+                    _collect_entities(v)
+                elif isinstance(v, list):
+                    for item in v:
+                        if isinstance(item, dict):
+                            _collect_entities(item)
+        elif isinstance(obj, list):
+            for item in obj:
+                _collect_entities(item)
+
+    for script in soup.find_all("script", type="application/ld+json"):
+        if not script.string or not script.string.strip():
+            continue
+        try:
+            data = json.loads(script.string.strip())
+            _collect_entities(data)
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    # Build lookup by normalized @type
+    def _types_of(entity: dict) -> list[str]:
+        t = entity.get("@type", "")
+        if isinstance(t, str):
+            return [t]
+        if isinstance(t, list):
+            return [str(x) for x in t]
+        return []
+
+    def _find_entities_by_type(type_name: str) -> list[dict]:
+        """Find entities whose @type matches type_name (case-insensitive)."""
+        name_lower = type_name.lower()
+        return [e for e in entities if any(t.lower() == name_lower for t in _types_of(e))]
+
+    def _has_type(type_name: str) -> bool:
+        return len(_find_entities_by_type(type_name)) > 0
+
+    def _has_local_business_type() -> tuple[bool, list[dict]]:
+        """Returns (found, matching_entities) for LocalBusiness or any known subtype."""
+        matches = [
+            e for e in entities
+            if any(t.lower() in _LOCAL_BUSINESS_SUBTYPES for t in _types_of(e))
+        ]
+        return len(matches) > 0, matches
+
+    # Scoring
+    score = 0
+    missing: list[str] = []
+
+    # --- Organization checks ---
+    org_entities = _find_entities_by_type("Organization")
+    has_org = len(org_entities) > 0
+
+    if has_org:
+        score += 15
+        org = org_entities[0]
+
+        if org.get("name"):
+            score += 5
+        else:
+            missing.append("Organization schema missing name property")
+
+        if org.get("url"):
+            score += 5
+        else:
+            missing.append("Organization schema missing url property")
+
+        if org.get("logo"):
+            score += 5
+        else:
+            missing.append("Organization missing logo property")
+
+        if org.get("contactPoint"):
+            score += 5
+        else:
+            missing.append("Organization missing contactPoint property")
+
+        same_as = org.get("sameAs", [])
+        if isinstance(same_as, str):
+            same_as = [same_as]
+        if isinstance(same_as, list) and len(same_as) >= 1:
+            score += 10
+        else:
+            missing.append("No sameAs links to social profiles or entity databases")
+
+        if org.get("@id"):
+            score += 5
+        else:
+            missing.append("Organization missing @id (entity identifier)")
+    else:
+        missing.append("Organization schema missing")
+
+    # --- WebSite checks ---
+    website_entities = _find_entities_by_type("WebSite")
+    has_website = len(website_entities) > 0
+
+    if has_website:
+        score += 10
+        ws = website_entities[0]
+
+        # SearchAction potential action
+        potential_action = ws.get("potentialAction")
+        has_search_action = False
+        if isinstance(potential_action, dict):
+            action_type = potential_action.get("@type", "")
+            if isinstance(action_type, str) and "searchaction" in action_type.lower():
+                has_search_action = True
+        elif isinstance(potential_action, list):
+            for action in potential_action:
+                if isinstance(action, dict) and "searchaction" in str(action.get("@type", "")).lower():
+                    has_search_action = True
+                    break
+        if has_search_action:
+            score += 5
+        else:
+            missing.append("WebSite missing potentialAction SearchAction (enables sitelinks search)")
+
+        # WebSite linked to Org via publisher or @id cross-ref
+        ws_publisher = ws.get("publisher")
+        org_id = org_entities[0].get("@id") if org_entities else None
+        ws_linked = False
+        if ws_publisher:
+            if isinstance(ws_publisher, dict) and ws_publisher.get("@id") and org_id:
+                ws_linked = ws_publisher["@id"] == org_id
+            elif isinstance(ws_publisher, dict) and ws_publisher.get("@type"):
+                ws_linked = True  # at least has a publisher reference
+        if not ws_linked and org_id:
+            # Check if website's @id or about references org
+            if ws.get("@id") or ws.get("about"):
+                ws_linked = True
+        if ws_linked:
+            score += 5
+        else:
+            missing.append("WebSite not linked to Organization via publisher property")
+    else:
+        missing.append("WebSite schema missing")
+
+    # --- LocalBusiness checks ---
+    has_lb, lb_entities = _has_local_business_type()
+    if has_lb:
+        score += 10
+        lb = lb_entities[0]
+
+        if lb.get("address"):
+            score += 5
+        else:
+            missing.append("LocalBusiness missing address property")
+
+        if lb.get("geo"):
+            score += 5
+        else:
+            missing.append("LocalBusiness missing geo (lat/lng) property")
+
+        if lb.get("openingHours") or lb.get("openingHoursSpecification"):
+            score += 5
+        else:
+            missing.append("LocalBusiness missing openingHours or openingHoursSpecification")
+    # No missing_props for LocalBusiness absence — it only applies to local businesses
+
+    # Dedupe entity types for reporting
+    all_type_strings: list[str] = []
+    for e in entities:
+        for t in _types_of(e):
+            if t and t not in all_type_strings:
+                all_type_strings.append(t)
+
+    return {
+        "quality_score": max(0, min(100, score)),
+        "entities": all_type_strings,
+        "missing_props": missing,
+    }
+
+
+def _extract_people(soup: BeautifulSoup, url: str) -> list[PersonSignal]:
+    """
+    Extract person signals from a page (typically an about/team page).
+
+    Sources checked (in order):
+      1. JSON-LD Person objects
+      2. Microdata [itemtype*="Person"]
+      3. Elements with team/staff/member/person/bio class names
+
+    Returns up to 10 PersonSignal objects, deduplicated by name.
+    """
+    people: list[PersonSignal] = []
+    seen_names: set[str] = set()
+
+    def _add_person(name: str, role: str = "", has_bio: bool = False,
+                    has_credentials: bool = False) -> None:
+        key = name.strip().lower()
+        if not key or key in seen_names:
+            return
+        # Must look like a real name: 2-5 words, each word capitalized-ish
+        words = name.strip().split()
+        if len(words) < 2 or len(words) > 5:
+            return
+        seen_names.add(key)
+        people.append(PersonSignal(
+            name=name.strip(),
+            role=role.strip(),
+            has_bio=has_bio,
+            has_credentials=has_credentials,
+            source_url=url,
+        ))
+
+    # 1. JSON-LD Person objects
+    for script in soup.find_all("script", type="application/ld+json"):
+        if not script.string:
+            continue
+        try:
+            data = json.loads(script.string.strip())
+        except (json.JSONDecodeError, AttributeError):
+            continue
+
+        def _walk_jsonld(obj):
+            if isinstance(obj, dict):
+                types = obj.get("@type", "")
+                if isinstance(types, str):
+                    types = [types]
+                if isinstance(types, list) and any("person" in str(t).lower() for t in types):
+                    name = obj.get("name", "")
+                    role = obj.get("jobTitle", "")
+                    if name:
+                        _add_person(name, role)
+                for v in obj.values():
+                    _walk_jsonld(v)
+            elif isinstance(obj, list):
+                for item in obj:
+                    _walk_jsonld(item)
+
+        _walk_jsonld(data)
+
+    # 2. Microdata [itemtype*="Person"]
+    for item in soup.find_all(attrs={"itemtype": True}):
+        if "person" not in item.get("itemtype", "").lower():
+            continue
+        name_el = item.find(attrs={"itemprop": "name"})
+        role_el = item.find(attrs={"itemprop": "jobTitle"})
+        if name_el:
+            name = name_el.get_text(" ", strip=True)
+            role = role_el.get_text(" ", strip=True) if role_el else ""
+            _add_person(name, role)
+
+    # 3. Class-based team/staff/bio sections
+    _TEAM_SELECTORS = [
+        '[class*="team" i]', '[class*="staff" i]', '[class*="member" i]',
+        '[class*="person" i]', '[class*="bio" i]',
+    ]
+    for selector in _TEAM_SELECTORS:
+        for container in soup.select(selector):
+            # Find a name from the first heading-like element with 2-5 words
+            name = ""
+            role = ""
+            for tag in container.find_all(["h2", "h3", "h4", "strong"]):
+                text = tag.get_text(" ", strip=True)
+                words = text.split()
+                if 2 <= len(words) <= 5:
+                    name = text
+                    break
+
+            if not name:
+                continue
+
+            # Find role from sibling or role-class element
+            role_el = container.find(
+                attrs={"class": lambda c: c and any(
+                    kw in " ".join(c).lower() for kw in ("title", "role", "position")
+                )}
+            ) if hasattr(container, "find") else None
+            if role_el:
+                role = role_el.get_text(" ", strip=True)
+            else:
+                # Try next sibling <p>
+                name_tag = container.find(["h2", "h3", "h4", "strong"])
+                if name_tag:
+                    sib = name_tag.find_next_sibling("p")
+                    if sib:
+                        role = sib.get_text(" ", strip=True)
+
+            # Bio and credentials from full container text
+            container_text = container.get_text(" ", strip=True)
+            has_bio = len(container_text.split()) >= 50
+            has_creds = bool(_CREDENTIALS_RE.search(container_text))
+
+            _add_person(name, role, has_bio, has_creds)
+
+        if len(people) >= 10:
+            break
+
+    return people[:10]
 
 
 def _analyze_anchors(soup: BeautifulSoup, base_url: str) -> tuple[int, int, int]:
@@ -978,12 +1376,33 @@ def _aggregate(result: CrawlResult) -> None:
         result.has_trust_signals_on_homepage = homepage_snap.has_trust_signals
         result.has_social_links = homepage_snap.has_social_links
         result.social_channel_count = homepage_snap.social_channel_count
+        # NEEATT-specific signals
+        result.has_media_mentions = homepage_snap.has_media_mentions
+        result.has_stat_counters = homepage_snap.has_stat_counters
+        result.has_ratings_widget = homepage_snap.has_ratings_widget
+        result.has_corp_registration = homepage_snap.has_corp_registration
+
+    # Schema quality — taken from homepage (most important page for entity graph)
+    if homepage_snap:
+        result.schema_quality_score = homepage_snap.schema_quality_score
+        result.schema_missing_props = homepage_snap.schema_missing_props
 
     # Agent readability aggregates
     if pages:
         result.avg_agent_readability = int(sum(p.agent_readability_score for p in pages) / len(pages))
         result.pages_with_landmarks = sum(1 for p in pages if p.semantic_landmarks > 0)
         result.total_images_missing_alt = sum(p.images_total - p.images_with_alt for p in pages)
+
+    # People extraction from about page
+    about_snap_for_people = next((p for p in pages if p.page_type == "about"), None)
+    if about_snap_for_people and about_snap_for_people.raw_html:
+        from bs4 import BeautifulSoup as _BS
+        about_soup = _BS(about_snap_for_people.raw_html, "lxml")
+        result.people = _extract_people(about_soup, about_snap_for_people.url)
+
+    # People counts for NEEATT scoring (set here for report template access)
+    result.people_with_bios = sum(1 for p in result.people if p.has_bio)
+    result.people_with_credentials = sum(1 for p in result.people if p.has_credentials)
 
     # Issues
     issues: list[CrawlIssue] = []
@@ -1057,13 +1476,37 @@ def _aggregate(result: CrawlResult) -> None:
             detail=f"{len(result.missing_anchor_text)} pages have internal links with missing or generic anchor text",
         ))
 
-    if result.schema_pages == 0:
+    # Schema quality issues (richer than the old binary check)
+    schema_q = result.schema_quality_score
+    if schema_q == 0:
         issues.append(CrawlIssue(
             category="schema",
-            severity="medium",
-            detail="No JSON-LD or microdata schema markup detected on crawled pages",
+            severity="critical",
+            detail="No schema markup on homepage — AI engines cannot establish entity identity for this domain",
         ))
-    elif result.schema_pages < result.total_pages // 2:
+    elif schema_q < 40:
+        # Emit individual issues for the top missing props
+        for mp in result.schema_missing_props[:3]:
+            issues.append(CrawlIssue(
+                category="schema",
+                severity="high",
+                detail=mp,
+            ))
+        issues.append(CrawlIssue(
+            category="schema",
+            severity="high",
+            detail=f"Homepage schema is incomplete (quality score {schema_q}/100) — critical entity properties are missing",
+        ))
+    elif schema_q < 70:
+        for mp in result.schema_missing_props[:2]:
+            issues.append(CrawlIssue(
+                category="schema",
+                severity="medium",
+                detail=mp,
+            ))
+
+    # Partial coverage check for non-homepage pages
+    if result.schema_pages < result.total_pages // 2:
         issues.append(CrawlIssue(
             category="schema",
             severity="low",
@@ -1191,8 +1634,15 @@ def _compute_health_score(result: CrawlResult) -> int:
     # Content quality
     if result.answer_capsules == 0:
         score -= 20
-    if result.schema_pages == 0:
+
+    # Schema quality (0-100) replaces binary page-count check
+    schema_q = result.schema_quality_score
+    if schema_q == 0:
+        score -= 15
+    elif schema_q < 40:
         score -= 10
+    elif schema_q < 70:
+        score -= 5
 
     # Small deductions per thin page (cap at 15)
     score -= min(15, len(result.thin_pages) * 3)
@@ -1243,49 +1693,90 @@ def _compute_health_score(result: CrawlResult) -> int:
 
 
 def _compute_credibility_score(result: CrawlResult) -> int:
-    """Credibility sub-score (0-100) from entity/trust signals.
+    """Credibility sub-score (0-100) using the NEEATT rubric.
 
-    Signals: authorship, social channels (>=3), trust/reviews, NAP, about/contact,
-    privacy/terms policy.
+    Dimensions and weights:
+      Notability        15% — media mentions, press, awards, partnerships
+      Experience        15% — years in business, project/client counters
+      Expertise         20% — authorship, staff bios, credentials, value prop
+      Authoritativeness 20% — third-party ratings, reviews, trust signals
+      Trustworthiness   15% — NAP, SSL, about/contact pages, corp registration
+      Transparency      15% — privacy policy, terms, social links
     """
-    score = 0
+    # --- Notability (0-100) ---
+    notability = 0
+    if result.has_media_mentions:
+        notability += 70
+    if result.has_about_page:
+        notability += 30  # about page is entity anchor
 
-    # Authorship (most important credibility signal) — 30 pts
+    # --- Experience (0-100) ---
+    experience = 0
+    if result.has_stat_counters:
+        experience += 70
+    if result.people_with_bios > 0:
+        experience += 30
+
+    # --- Expertise (0-100) ---
+    expertise = 0
     if result.authorship_pages > 0:
         ratio = result.authorship_pages / max(result.total_pages, 1)
-        score += int(30 * min(ratio * 2, 1.0))  # full at 50%+ coverage
+        expertise += int(50 * min(ratio * 2, 1.0))  # up to 50pts at 50%+ coverage
+    if result.people_with_credentials > 0:
+        expertise += 30
+    if result.people_with_bios >= 2:
+        expertise += 20
 
-    # Social channel count (>=3 = pass) — 20 pts
-    if result.social_channel_count >= 3:
-        score += 20
-    elif result.social_channel_count >= 1:
-        score += 8
-
-    # Trust signals (reviews, testimonials, client logos) — 15 pts
+    # --- Authoritativeness (0-100) ---
+    authoritativeness = 0
+    if result.has_ratings_widget:
+        authoritativeness += 50
     if result.has_trust_signals_on_homepage:
-        score += 15
+        authoritativeness += 50
 
-    # NAP (name/address/phone on homepage) — 10 pts
+    # --- Trustworthiness (0-100) ---
+    trustworthiness = 0
+    if result.has_ssl:
+        trustworthiness += 25
     if result.has_contact_info_on_homepage:
-        score += 10
-
-    # About page — 10 pts
+        trustworthiness += 25
     if result.has_about_page:
-        score += 10
-
-    # Contact page — 5 pts
+        trustworthiness += 20
     if result.has_contact_page:
-        score += 5
+        trustworthiness += 15
+    if result.has_corp_registration:
+        trustworthiness += 15
 
-    # Privacy policy — 5 pts
+    # --- Transparency (0-100) ---
+    transparency = 0
     if result.has_privacy_policy:
-        score += 5
-
-    # Terms of service — 5 pts
+        transparency += 35
     if result.has_terms:
-        score += 5
+        transparency += 25
+    sc = result.social_channel_count
+    if sc >= 3:
+        transparency += 40
+    elif sc >= 1:
+        transparency += 20
 
-    return max(0, min(100, score))
+    # Store sub-scores
+    result.neeatt_notability = max(0, min(100, notability))
+    result.neeatt_experience = max(0, min(100, experience))
+    result.neeatt_expertise = max(0, min(100, expertise))
+    result.neeatt_authoritativeness = max(0, min(100, authoritativeness))
+    result.neeatt_trustworthiness = max(0, min(100, trustworthiness))
+    result.neeatt_transparency = max(0, min(100, transparency))
+
+    # Weighted composite
+    composite = (
+        0.15 * result.neeatt_notability
+        + 0.15 * result.neeatt_experience
+        + 0.20 * result.neeatt_expertise
+        + 0.20 * result.neeatt_authoritativeness
+        + 0.15 * result.neeatt_trustworthiness
+        + 0.15 * result.neeatt_transparency
+    )
+    return max(0, min(100, round(composite)))
 
 
 # ---------------------------------------------------------------------------
@@ -1517,6 +2008,9 @@ def _fetch_and_analyze(
             redirect_hops=len(r.history),
         )
         snap.page_type = page_type
+        # Store raw HTML for targeted pages so people extraction can re-parse
+        if page_type in ("about", "homepage"):
+            snap.raw_html = r.text
         soup = BeautifulSoup(r.text, "lxml")
         return snap, soup
     except requests.RequestException as e:
@@ -1634,13 +2128,44 @@ def _derive_main_keyword(soup: BeautifulSoup, domain: str) -> str:
     return domain.split(".")[0]
 
 
+_NOTABILITY_PATTERNS = [
+    r"\bas\s+seen\s+on\b", r"\bfeatured\s+(?:in|on)\b", r"\bpress\b",
+    r"\bmedia\s+(?:coverage|mention|feature)\b", r"\bin\s+the\s+news\b",
+    r"\bpublished\s+in\b", r"\brecognized\s+by\b", r"\baward(?:ed|s)?\b",
+    r"\bpartner(?:ship)?s?\s+with\b",
+]
+
+_EXPERIENCE_PATTERNS = [
+    r"\b\d[\d,]*\+?\s*(?:year|yr)s?\s+(?:of\s+)?(?:experience|expertise|in\s+(?:business|industry))\b",
+    r"\b\d[\d,]*\+?\s*(?:project|client|customer|case|deal|home|unit|property|contract)s?\b",
+    r"\b\d[\d,]*\+?\s*(?:team\s+member|employee|staff|professional)s?\b",
+    r"\bsince\s+(?:19|20)\d\d\b",
+]
+
+_RATINGS_PATTERNS = [
+    r"\btrustpilot\b", r"\bgoogle\s+(?:review|rating)\b",
+    r"\b(?:4|5)[\.,]\d\s*(?:out\s+of\s*5|stars?|\/\s*5)\b",
+    r"\bverified\s+review", r"\bbbb\s+accredited\b",
+    r"\bang(?:ie|i['']s)\s+list\b",
+]
+
+_CORP_REGISTRATION_PATTERNS = [
+    r"\bein\b", r"\bein[:\s]?\d{2}-\d{7}\b",
+    r"\bllc\b", r"\binc\b", r"\b(?:incorporated|corporation|registered\s+(?:business|company))\b",
+    r"\bregistration\s+(?:number|no\.?)\b",
+    r"\bcompany\s+(?:number|no\.?|reg\.?)\b",
+]
+
+
 def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
     """
     Extract credibility and trust signals from a page's HTML.
 
     Returns a dict of booleans:
       has_privacy_link, has_terms_link, has_nap_signals,
-      has_trust_signals, has_social_links
+      has_trust_signals, has_social_links, social_channel_count,
+      has_media_mentions, has_stat_counters, has_ratings_widget,
+      has_corp_registration
     """
     all_links = soup.find_all("a", href=True)
     page_text = soup.get_text(" ", strip=True).lower()
@@ -1658,15 +2183,23 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
         for a in all_links
     )
 
-    # NAP — phone number or address-like text
-    has_nap = bool(_PHONE_RE.search(page_text))
+    # Check footer specifically for NAP (that's where it lives most often)
+    footer = soup.find("footer")
+    footer_text = footer.get_text(" ", strip=True).lower() if footer else ""
+
+    # Email detection
+    has_email = bool(re.search(r"\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b", page_text))
+
+    # Enhanced NAP: phone OR address OR email
+    has_nap = bool(_PHONE_RE.search(page_text)) or has_email
     if not has_nap:
-        # Street address pattern: "123 Main Street" style
         has_nap = bool(re.search(
             r"\b\d{1,5}\s+\w[\w\s]{2,30}"
             r"(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|place|pl)\b",
             page_text,
         ))
+    if not has_nap and footer_text:
+        has_nap = bool(_PHONE_RE.search(footer_text))
 
     # Trust signals: testimonials, reviews, ratings, client logos, case studies
     _TRUST_PATTERNS = [
@@ -1692,6 +2225,18 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
     social_channel_count = len(seen_platforms)
     has_social = social_channel_count >= 1
 
+    # NEEATT: Notability — media mentions / press logos
+    has_media_mentions = any(re.search(p, page_text) for p in _NOTABILITY_PATTERNS)
+
+    # NEEATT: Experience — stat counters (quantified track record)
+    has_stat_counters = any(re.search(p, page_text) for p in _EXPERIENCE_PATTERNS)
+
+    # NEEATT: Authoritativeness — third-party ratings/reviews widget
+    has_ratings_widget = any(re.search(p, page_text) for p in _RATINGS_PATTERNS)
+
+    # NEEATT: Transparency — corporate registration signals
+    has_corp_registration = any(re.search(p, page_text) for p in _CORP_REGISTRATION_PATTERNS)
+
     return {
         "has_privacy_link": has_privacy,
         "has_terms_link": has_terms,
@@ -1699,4 +2244,8 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
         "has_trust_signals": has_trust,
         "has_social_links": has_social,
         "social_channel_count": social_channel_count,
+        "has_media_mentions": has_media_mentions,
+        "has_stat_counters": has_stat_counters,
+        "has_ratings_widget": has_ratings_widget,
+        "has_corp_registration": has_corp_registration,
     }

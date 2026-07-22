@@ -817,6 +817,54 @@ body {
 }
 
 /* ==================================================================
+   NEEATT DIMENSION BAR
+   ================================================================== */
+.neeatt-bar {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+}
+@media (max-width: 900px) { .neeatt-bar { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 560px) { .neeatt-bar { grid-template-columns: repeat(2, 1fr); } }
+
+.neeatt-dim {
+    background: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.neeatt-dim-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-muted);
+}
+.neeatt-dim-track {
+    height: 6px;
+    background: var(--border-subtle);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.neeatt-dim-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width .3s ease;
+}
+.neeatt-fill--ok   { background: #4ade80; }
+.neeatt-fill--warn { background: #fb923c; }
+.neeatt-fill--bad  { background: #f87171; }
+.neeatt-dim-score {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* ==================================================================
    CREDIBILITY SIGNAL CARDS
    ================================================================== */
 .cred-grid {
@@ -1471,83 +1519,120 @@ body {
         </div>
     </div>
 
+    {# ── NEEATT sub-score bar ─────────────────────────────────────── #}
+    {% set cs = report.crawl_signals %}
+    <div class="neeatt-bar">
+        {% for dim, score in [
+            ("Notability",       cs.neeatt_notability),
+            ("Experience",       cs.neeatt_experience),
+            ("Expertise",        cs.neeatt_expertise),
+            ("Authority",        cs.neeatt_authoritativeness),
+            ("Trustworthiness",  cs.neeatt_trustworthiness),
+            ("Transparency",     cs.neeatt_transparency)
+        ] %}
+        <div class="neeatt-dim">
+            <div class="neeatt-dim-label">{{ dim }}</div>
+            <div class="neeatt-dim-track">
+                <div class="neeatt-dim-fill {% if score >= 70 %}neeatt-fill--ok{% elif score >= 40 %}neeatt-fill--warn{% else %}neeatt-fill--bad{% endif %}" style="width:{{ score }}%"></div>
+            </div>
+            <div class="neeatt-dim-score {% if score >= 70 %}signal-status-ok{% elif score >= 40 %}signal-status-warn{% else %}signal-status-bad{% endif %}">{{ score }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
     <div class="cred-grid">
-        {# Authorship #}
-        {% if report.crawl_signals.authorship_pages > 0 %}
-            {% set auth_ratio = report.crawl_signals.authorship_pages / [report.crawl_signals.total_pages, 1]|max %}
+        {# Notability — media / press #}
+        {% set nm_status = 'ok' if cs.has_media_mentions else 'warn' %}
+        <div class="cred-card cred-card--{{ nm_status }}">
+            <div class="cred-card-icon">&#x1F4F0;</div>
+            <div class="cred-card-value cred-card-value--{{ nm_status }}">{% if cs.has_media_mentions %}Detected{% else %}Missing{% endif %}</div>
+            <div class="cred-card-label">Press / Media Mentions</div>
+            <div class="cred-card-desc">"As seen on", awards, partnerships (Notability)</div>
+        </div>
+
+        {# Experience — stat counters #}
+        {% set sc_exp_status = 'ok' if cs.has_stat_counters else 'warn' %}
+        <div class="cred-card cred-card--{{ sc_exp_status }}">
+            <div class="cred-card-icon">&#x1F4CA;</div>
+            <div class="cred-card-value cred-card-value--{{ sc_exp_status }}">{% if cs.has_stat_counters %}Detected{% else %}Missing{% endif %}</div>
+            <div class="cred-card-label">Quantified Experience</div>
+            <div class="cred-card-desc">Years in business, project counters (Experience)</div>
+        </div>
+
+        {# Expertise — authorship #}
+        {% if cs.authorship_pages > 0 %}
+            {% set auth_ratio = cs.authorship_pages / [cs.total_pages, 1]|max %}
             {% if auth_ratio >= 0.5 %}{% set auth_status = 'ok' %}{% else %}{% set auth_status = 'warn' %}{% endif %}
         {% else %}
             {% set auth_status = 'bad' %}
         {% endif %}
         <div class="cred-card cred-card--{{ auth_status }}">
             <div class="cred-card-icon">&#x1F464;</div>
-            <div class="cred-card-value cred-card-value--{{ auth_status }}">{{ report.crawl_signals.authorship_pages }}/{{ report.crawl_signals.total_pages }}</div>
+            <div class="cred-card-value cred-card-value--{{ auth_status }}">{{ cs.authorship_pages }}/{{ cs.total_pages }}</div>
             <div class="cred-card-label">Author Bylines</div>
-            <div class="cred-card-desc">Pages with visible author or Person schema</div>
+            <div class="cred-card-desc">Pages with visible author or Person schema (Expertise)</div>
         </div>
 
-        {# Social channel count #}
-        {% set sc = report.crawl_signals.social_channel_count %}
+        {# Expertise — team/people #}
+        {% set people_count = cs.people|length %}
+        {% set people_status = 'ok' if people_count >= 2 else ('warn' if people_count == 1 else 'bad') %}
+        <div class="cred-card cred-card--{{ people_status }}">
+            <div class="cred-card-icon">&#x1F465;</div>
+            <div class="cred-card-value cred-card-value--{{ people_status }}">{{ people_count }} found{% if cs.people_with_credentials > 0 %}, {{ cs.people_with_credentials }} credentialed{% endif %}</div>
+            <div class="cred-card-label">Team / People Profiles</div>
+            <div class="cred-card-desc">Named individuals with bios on About page (Expertise)</div>
+        </div>
+
+        {# Authoritativeness — ratings widget #}
+        {% set rating_status = 'ok' if cs.has_ratings_widget else ('warn' if cs.has_trust_signals_on_homepage else 'bad') %}
+        <div class="cred-card cred-card--{{ rating_status }}">
+            <div class="cred-card-icon">&#x2B50;</div>
+            <div class="cred-card-value cred-card-value--{{ rating_status }}">{% if cs.has_ratings_widget %}Widget found{% elif cs.has_trust_signals_on_homepage %}Partial{% else %}Missing{% endif %}</div>
+            <div class="cred-card-label">Ratings / Reviews</div>
+            <div class="cred-card-desc">Trustpilot, Google ratings, testimonials (Authoritativeness)</div>
+        </div>
+
+        {# Trustworthiness — NAP #}
+        {% set nap_status = 'ok' if cs.has_contact_info_on_homepage else 'warn' %}
+        <div class="cred-card cred-card--{{ nap_status }}">
+            <div class="cred-card-icon">&#x1F4CD;</div>
+            <div class="cred-card-value cred-card-value--{{ nap_status }}">{% if cs.has_contact_info_on_homepage %}Found{% else %}Missing{% endif %}</div>
+            <div class="cred-card-label">NAP on Homepage</div>
+            <div class="cred-card-desc">Name, address, phone or email (Trustworthiness)</div>
+        </div>
+
+        {# Trustworthiness — About + Contact pages #}
+        {% set pages_status = 'ok' if (cs.has_about_page and cs.has_contact_page) else ('warn' if (cs.has_about_page or cs.has_contact_page) else 'bad') %}
+        <div class="cred-card cred-card--{{ pages_status }}">
+            <div class="cred-card-icon">&#x2139;&#xFE0F;</div>
+            <div class="cred-card-value cred-card-value--{{ pages_status }}">
+                {% if cs.has_about_page %}&#x2713; About{% else %}&#x2717; About{% endif %} &nbsp;
+                {% if cs.has_contact_page %}&#x2713; Contact{% else %}&#x2717; Contact{% endif %}
+            </div>
+            <div class="cred-card-label">Entity Pages</div>
+            <div class="cred-card-desc">About + Contact pages for AI entity grounding</div>
+        </div>
+
+        {# Transparency — social channels #}
+        {% set sc = cs.social_channel_count %}
         {% set sc_status = 'ok' if sc >= 3 else ('warn' if sc >= 1 else 'bad') %}
         <div class="cred-card cred-card--{{ sc_status }}">
             <div class="cred-card-icon">&#x1F4F1;</div>
-            <div class="cred-card-value cred-card-value--{{ sc_status }}">{{ sc }}/8 {% if sc >= 3 %}&#x2713;{% else %}&#x2717;{% endif %}</div>
+            <div class="cred-card-value cred-card-value--{{ sc_status }}">{{ sc }} platform{{ 's' if sc != 1 }} {% if sc >= 3 %}&#x2713;{% else %}&#x2717;{% endif %}</div>
             <div class="cred-card-label">Social Presence</div>
-            <div class="cred-card-desc">Distinct platform links on homepage (threshold: 3)</div>
+            <div class="cred-card-desc">Distinct platform links — threshold 3 (Transparency)</div>
         </div>
 
-        {# Trust signals #}
-        {% set ts_status = 'ok' if report.crawl_signals.has_trust_signals_on_homepage else 'bad' %}
-        <div class="cred-card cred-card--{{ ts_status }}">
-            <div class="cred-card-icon">&#x2B50;</div>
-            <div class="cred-card-value cred-card-value--{{ ts_status }}">{% if report.crawl_signals.has_trust_signals_on_homepage %}Found{% else %}Missing{% endif %}</div>
-            <div class="cred-card-label">Reviews / Testimonials</div>
-            <div class="cred-card-desc">Social proof signals on homepage</div>
-        </div>
-
-        {# NAP #}
-        {% set nap_status = 'ok' if report.crawl_signals.has_contact_info_on_homepage else 'warn' %}
-        <div class="cred-card cred-card--{{ nap_status }}">
-            <div class="cred-card-icon">&#x1F4CD;</div>
-            <div class="cred-card-value cred-card-value--{{ nap_status }}">{% if report.crawl_signals.has_contact_info_on_homepage %}Found{% else %}Missing{% endif %}</div>
-            <div class="cred-card-label">NAP Signals</div>
-            <div class="cred-card-desc">Phone number or address on homepage</div>
-        </div>
-
-        {# About page #}
-        {% set about_status = 'ok' if report.crawl_signals.has_about_page else 'warn' %}
-        <div class="cred-card cred-card--{{ about_status }}">
-            <div class="cred-card-icon">&#x2139;&#xFE0F;</div>
-            <div class="cred-card-value cred-card-value--{{ about_status }}">{% if report.crawl_signals.has_about_page %}Present{% else %}Missing{% endif %}</div>
-            <div class="cred-card-label">About Page</div>
-            <div class="cred-card-desc">Entity-defining page for AI grounding</div>
-        </div>
-
-        {# Contact page #}
-        {% set contact_status = 'ok' if report.crawl_signals.has_contact_page else 'warn' %}
-        <div class="cred-card cred-card--{{ contact_status }}">
-            <div class="cred-card-icon">&#x1F4E7;</div>
-            <div class="cred-card-value cred-card-value--{{ contact_status }}">{% if report.crawl_signals.has_contact_page %}Present{% else %}Missing{% endif %}</div>
-            <div class="cred-card-label">Contact Page</div>
-            <div class="cred-card-desc">Accessibility and trust signal</div>
-        </div>
-
-        {# Privacy policy #}
-        {% set pp_status = 'ok' if report.crawl_signals.has_privacy_policy else 'warn' %}
-        <div class="cred-card cred-card--{{ pp_status }}">
+        {# Transparency — Privacy + Terms #}
+        {% set legal_status = 'ok' if (cs.has_privacy_policy and cs.has_terms) else ('warn' if (cs.has_privacy_policy or cs.has_terms) else 'bad') %}
+        <div class="cred-card cred-card--{{ legal_status }}">
             <div class="cred-card-icon">&#x1F512;</div>
-            <div class="cred-card-value cred-card-value--{{ pp_status }}">{% if report.crawl_signals.has_privacy_policy %}Found{% else %}Missing{% endif %}</div>
-            <div class="cred-card-label">Privacy Policy</div>
-            <div class="cred-card-desc">Legal compliance and entity trust</div>
-        </div>
-
-        {# Terms #}
-        {% set terms_status = 'ok' if report.crawl_signals.has_terms else 'warn' %}
-        <div class="cred-card cred-card--{{ terms_status }}">
-            <div class="cred-card-icon">&#x1F4C4;</div>
-            <div class="cred-card-value cred-card-value--{{ terms_status }}">{% if report.crawl_signals.has_terms %}Found{% else %}Missing{% endif %}</div>
-            <div class="cred-card-label">Terms of Service</div>
-            <div class="cred-card-desc">Legal compliance and entity trust</div>
+            <div class="cred-card-value cred-card-value--{{ legal_status }}">
+                {% if cs.has_privacy_policy %}&#x2713; Privacy{% else %}&#x2717; Privacy{% endif %} &nbsp;
+                {% if cs.has_terms %}&#x2713; Terms{% else %}&#x2717; Terms{% endif %}
+            </div>
+            <div class="cred-card-label">Legal Policies</div>
+            <div class="cred-card-desc">Privacy policy + Terms of service (Transparency)</div>
         </div>
     </div>
 
@@ -1617,18 +1702,35 @@ body {
 
         <div class="signal-subgroup">Schema &amp; Entity</div>
 
-        <div class="signal-card {% if report.crawl_signals.schema_pages == 0 %}signal-card--bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
+        {% set sq = report.crawl_signals.schema_quality_score %}
+        <div class="signal-card {% if sq == 0 %}signal-card--bad{% elif sq < 40 %}signal-card--bad{% elif sq < 70 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
             <div class="signal-icon">&#x1F516;</div>
-            <div class="signal-value {% if report.crawl_signals.schema_pages == 0 %}signal-status-bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">{{ report.crawl_signals.schema_pages }}/{{ report.crawl_signals.total_pages }}</div>
-            <div class="signal-label">Pages with Schema Markup</div>
-            <div class="signal-desc">JSON-LD or microdata detected</div>
+            <div class="signal-value {% if sq < 40 %}signal-status-bad{% elif sq < 70 %}signal-status-warn{% else %}signal-status-ok{% endif %}">{{ sq }}/100</div>
+            <div class="signal-label">Schema Quality Score</div>
+            <div class="signal-desc">Entity graph completeness: Organization, WebSite, LocalBusiness, @id connectivity, sameAs</div>
+        </div>
+
+        <div class="signal-card {% if report.crawl_signals.schema_pages == 0 %}signal-card--bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-card--warn{% else %}signal-card--ok{% endif %}">
+            <div class="signal-icon">&#x1F4C4;</div>
+            <div class="signal-value {% if report.crawl_signals.schema_pages == 0 %}signal-status-bad{% elif report.crawl_signals.schema_pages < report.crawl_signals.total_pages // 2 %}signal-status-warn{% else %}signal-status-ok{% endif %}">{{ report.crawl_signals.schema_pages }}/{{ report.crawl_signals.total_pages }} pages</div>
+            <div class="signal-label">Schema Coverage</div>
+            <div class="signal-desc">Pages with JSON-LD or microdata detected</div>
         </div>
 
         <div class="signal-card">
             <div class="signal-icon">&#x1F9E9;</div>
-            <div class="signal-value">{{ report.crawl_signals.schema_types_found|length }}</div>
+            <div class="signal-value">{{ report.crawl_signals.schema_types_found|join(", ") if report.crawl_signals.schema_types_found else "None" }}</div>
             <div class="signal-label">Schema Types Found</div>
         </div>
+
+        {% if report.crawl_signals.schema_missing_props %}
+        <div class="signal-card signal-card--warn" style="grid-column: span 2;">
+            <div class="signal-icon">&#x26A0;&#xFE0F;</div>
+            <div class="signal-value signal-status-warn">{{ report.crawl_signals.schema_missing_props|length }} gap{{ 's' if report.crawl_signals.schema_missing_props|length != 1 }}</div>
+            <div class="signal-label">Schema Gaps</div>
+            <div class="signal-desc">{{ report.crawl_signals.schema_missing_props[:3]|join(" &bull; ")|safe }}</div>
+        </div>
+        {% endif %}
 
         <div class="signal-card {% if not report.crawl_signals.has_llms_txt %}signal-card--warn{% else %}signal-card--ok{% endif %}">
             <div class="signal-icon">&#x1F4CB;</div>
