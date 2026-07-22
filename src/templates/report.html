@@ -621,9 +621,10 @@ body {
 }
 
 .matrix-table {
-    width: 100%; border-collapse: collapse;
+    width: 100%; border-collapse: collapse; table-layout: fixed;
     min-width: 600px; background: var(--surface-card); font-size: 13px;
 }
+.matrix-table thead th:not(:first-child) { width: 1fr; }
 
 .matrix-table thead th {
     background: var(--surface-subtle);
@@ -1267,65 +1268,72 @@ body {
     </div>
 
     <div class="diagnostic-grid">
+        {# Strengths — cap at 3 most material #}
+        {% set ns = namespace(count=0) %}
         <div class="diagnostic-section">
             <div class="diagnostic-section-title">Strengths</div>
             <ul class="diagnostic-list">
-                {% if report.crawl_signals.answer_capsules > 5 %}
-                <li class="strength">Strong answer-first content ({{ report.crawl_signals.answer_capsules }} capsules)</li>
+                {% if ns.count < 3 and not report.crawl_signals.robots_blocks_ai %}
+                <li class="strength">AI crawlers have full access</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.schema_pages > 3 %}
-                <li class="strength">Good schema markup coverage ({{ report.crawl_signals.schema_pages }} pages)</li>
+                {% if ns.count < 3 and report.crawl_signals.has_ssl %}
+                <li class="strength">Site served over HTTPS</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.authorship_pages > 3 %}
-                <li class="strength">Authorship signals present ({{ report.crawl_signals.authorship_pages }} pages)</li>
+                {% if ns.count < 3 and report.crawl_signals.schema_quality_score >= 60 %}
+                <li class="strength">Homepage schema quality {{ report.crawl_signals.schema_quality_score }}/100</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.has_llms_txt %}
-                <li class="strength">/llms.txt file present</li>
+                {% if ns.count < 3 and report.crawl_signals.answer_capsules > 5 %}
+                <li class="strength">Strong answer-first content ({{ report.crawl_signals.answer_capsules }} capsules)</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if not report.crawl_signals.robots_blocks_ai %}
-                <li class="strength">AI bots have access ({{ report.crawl_signals.ai_bots_allowed }}/{{ report.crawl_signals.ai_bots_allowed + report.crawl_signals.ai_bots_blocked }})</li>
+                {% if ns.count < 3 and report.crawl_signals.avg_response_ms < 500 %}
+                <li class="strength">Fast response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.avg_response_ms < 500 %}
-                <li class="strength">Fast response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
+                {% if ns.count < 3 and report.crawl_signals.thin_pages|length == 0 %}
+                <li class="strength">No thin content detected</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.thin_pages|length == 0 %}
-                <li class="strength">No thin content detected</li>
+                {% if ns.count < 3 and report.crawl_signals.people|length > 0 %}
+                <li class="strength">{{ report.crawl_signals.people|length }} team member{{ 's' if report.crawl_signals.people|length != 1 }} identified</li>{% set ns.count = ns.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.answer_capsules <= 5 and report.crawl_signals.schema_pages <= 3 and report.crawl_signals.authorship_pages <= 3 and not report.crawl_signals.has_llms_txt and report.crawl_signals.robots_blocks_ai and report.crawl_signals.avg_response_ms >= 500 and report.crawl_signals.thin_pages|length > 0 %}
-                <li class="muted">No significant strengths identified in current crawl signals</li>
+                {% if ns.count == 0 %}
+                <li class="muted">No significant strengths identified</li>
                 {% endif %}
             </ul>
         </div>
 
+        {# Weak Points — cap at 6 most material #}
+        {% set ns2 = namespace(count=0) %}
         <div class="diagnostic-section">
             <div class="diagnostic-section-title">Weak Points</div>
             <ul class="diagnostic-list">
-                {% if report.ai_coverage_pct == 0 %}
-                <li class="weakness">Zero AI coverage</li>
+                {% if ns2.count < 6 and report.ai_coverage_pct == 0 %}
+                <li class="weakness">Zero AI coverage across all queries</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.answer_capsules == 0 %}
-                <li class="weakness">No answer-first content detected</li>
+                {% if ns2.count < 6 and report.crawl_signals.robots_blocks_ai %}
+                <li class="weakness">AI crawlers blocked by robots.txt</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.schema_pages == 0 %}
-                <li class="weakness">Missing schema markup</li>
+                {% if ns2.count < 6 and report.crawl_signals.schema_quality_score < 40 %}
+                <li class="weakness">Homepage schema weak ({{ report.crawl_signals.schema_quality_score }}/100)</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.authorship_pages == 0 %}
-                <li class="weakness">No authorship signals</li>
+                {% if ns2.count < 6 and report.crawl_signals.answer_capsules == 0 %}
+                <li class="weakness">No answer-first content detected</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if not report.crawl_signals.has_llms_txt %}
-                <li class="weakness">/llms.txt file missing</li>
+                {% if ns2.count < 6 and (report.crawl_signals.has_reviews_widget and not report.crawl_signals.has_rating_schema) %}
+                <li class="weakness">Reviews visible but not AI-readable (no AggregateRating schema)</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.robots_blocks_ai %}
-                <li class="weakness">AI bots blocked by robots.txt</li>
+                {% if ns2.count < 6 and report.crawl_signals.multiple_h1_pages|length > 0 %}
+                <li class="weakness">Multiple H1 tags on {{ report.crawl_signals.multiple_h1_pages|length }} page{{ 's' if report.crawl_signals.multiple_h1_pages|length != 1 }}</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.avg_response_ms > 500 %}
-                <li class="weakness">Slow response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>
+                {% if ns2.count < 6 and not report.crawl_signals.has_llms_txt %}
+                <li class="weakness">/llms.txt file missing</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.thin_pages|length > 0 %}
-                <li class="weakness">{{ report.crawl_signals.thin_pages|length }} thin pages detected</li>
+                {% if ns2.count < 6 and report.crawl_signals.thin_pages|length > 0 %}
+                <li class="weakness">{{ report.crawl_signals.thin_pages|length }} thin page{{ 's' if report.crawl_signals.thin_pages|length != 1 }} detected</li>{% set ns2.count = ns2.count + 1 %}
                 {% endif %}
-                {% if report.crawl_signals.total_images_missing_alt > 0 %}
-                <li class="weakness">{{ report.crawl_signals.total_images_missing_alt }} images missing alt text</li>
+                {% if ns2.count < 6 and report.crawl_signals.avg_response_ms > 1000 %}
+                <li class="weakness">Slow response time ({{ report.crawl_signals.avg_response_ms }}ms)</li>{% set ns2.count = ns2.count + 1 %}
+                {% endif %}
+                {% if ns2.count == 0 %}
+                <li class="muted">No significant weak points detected</li>
                 {% endif %}
             </ul>
         </div>
@@ -1477,9 +1485,9 @@ body {
                         <th>Engine</th>
                         <th>Query</th>
                         <th>Leading Brand</th>
-                        <th>AI Cited?</th>
-                        <th>Target URLs</th>
+                        <th>Mentioned?</th>
                         <th>Your Position</th>
+                        <th>Cited?</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1488,10 +1496,10 @@ body {
                     <tr class="row-{{ eng_key }}">
                         <td class="engine-cell"><span class="engine-pill engine-pill--{{ eng_key }}">{{ result.engine|replace(' (mock)', '') }}</span></td>
                         <td>{{ result.topic }}</td>
-                        <td>{% if result.target_brand_position == 1 %}<span class="matrix-cell-brand">{{ brand_name }}</span>{% elif result.top_competitor %}{% set tc_url = report.citation_matrix.brand_urls.get(result.top_competitor) %}{% if tc_url %}<a href="https://{{ tc_url }}" target="_blank" rel="noopener" class="hit-badge hit-badge--link">{{ result.top_competitor }}</a>{% else %}<span class="hit-badge">{{ result.top_competitor }}</span>{% endif %}{% else %}<span style="color:var(--text-muted)">-</span>{% endif %}</td>
+                        <td>{% if result.target_brand_position == 1 %}<span class="matrix-cell-brand">{{ brand_name }}</span>{% elif result.top_competitor %}<span class="hit-badge">{{ result.top_competitor }}</span>{% else %}<span style="color:var(--text-muted)">-</span>{% endif %}</td>
                         <td>{% if result.covered %}<span class="cited-yes">&#x2713; Yes</span>{% else %}<span class="cited-no">&#x2717; No</span>{% endif %}</td>
-                        <td>{% if result.best_url_citations > 0 %}<strong>{{ result.best_url_citations }}</strong>{% else %}<span style="color:var(--text-muted)">0</span>{% endif %}</td>
                         <td>{% if result.target_brand_position %}<strong>#{{ result.target_brand_position }}</strong>{% elif result.covered %}<span style="color:var(--text-muted)">cited</span>{% else %}<span style="color:var(--text-muted)">-</span>{% endif %}</td>
+                        <td>{% if result.covered %}<span class="cited-yes">&#x2713;</span>{% else %}<span class="cited-no">&#x2717;</span>{% endif %}</td>
                     </tr>
                 {% endfor %}
                 </tbody>
@@ -1590,13 +1598,25 @@ body {
         </div>
 
         {# Authoritativeness — ratings widget #}
-        {% set rating_status = 'ok' if cs.has_ratings_widget else ('warn' if cs.has_trust_signals_on_homepage else 'bad') %}
+        {% set has_rw = cs.has_reviews_widget or cs.has_ratings_widget %}
+        {% set has_rs = cs.has_rating_schema %}
+        {% set rating_status = 'ok' if has_rs else ('warn' if has_rw else 'bad') %}
         <div class="cred-card cred-card--{{ rating_status }}">
             <div class="cred-card-icon">&#x2B50;</div>
-            <div class="cred-card-value cred-card-value--{{ rating_status }}">{% if cs.has_ratings_widget %}Widget found{% elif cs.has_trust_signals_on_homepage %}Partial{% else %}Missing{% endif %}</div>
+            <div class="cred-card-value cred-card-value--{{ rating_status }}">{% if has_rs %}Schema ✓{% elif has_rw %}Widget only{% else %}Missing{% endif %}</div>
             <div class="cred-card-label">Ratings / Reviews</div>
-            <div class="cred-card-desc">Trustpilot, Google ratings, testimonials (Authoritativeness)</div>
+            <div class="cred-card-desc">{% if has_rw and not has_rs %}Reviews found but no AggregateRating schema — invisible to AI{% elif has_rs %}AggregateRating schema present — AI-readable{% else %}No ratings widget or schema detected{% endif %}</div>
         </div>
+
+        {# H1 targeting conflicts #}
+        {% if cs.multiple_h1_pages|length > 0 %}
+        <div class="cred-card cred-card--warn">
+            <div class="cred-card-icon">&#x26A0;</div>
+            <div class="cred-card-value cred-card-value--warn">{{ cs.multiple_h1_pages|length }} page{{ 's' if cs.multiple_h1_pages|length != 1 }}</div>
+            <div class="cred-card-label">Multiple H1 Tags</div>
+            <div class="cred-card-desc">Conflicting H1s confuse AI topic targeting — each page should have one H1</div>
+        </div>
+        {% endif %}
 
         {# Trustworthiness — NAP #}
         {% set nap_status = 'ok' if cs.has_contact_info_on_homepage else 'warn' %}

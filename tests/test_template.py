@@ -232,7 +232,8 @@ class TestTemplateStructure:
         """Section 5: Competitive Landscape."""
         assert "Competitive Landscape" in self.html, "Landscape section title missing"
         assert '<table class="landscape-table"' in self.html, "Landscape table missing"
-        assert "Target URLs" in self.html, "Landscape column 'Target URLs' missing"
+        assert "Mentioned?" in self.html, "Landscape column 'Mentioned?' missing"
+        assert "Your Position" in self.html, "Landscape column 'Your Position' missing"
 
     def test_indexability_audit_present(self):
         """Indexability bucket section with signal cards."""

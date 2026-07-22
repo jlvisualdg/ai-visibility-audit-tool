@@ -196,6 +196,9 @@ class PageSnapshot:
     has_media_mentions: bool = False
     has_stat_counters: bool = False
     has_ratings_widget: bool = False
+    has_reviews_widget: bool = False     # JS review widget present in DOM
+    has_rating_schema: bool = False      # AggregateRating schema present
+    h1_count: int = 0                    # number of H1 tags on page
     has_corp_registration: bool = False
     # Raw HTML for targeted pages (about/homepage only) — used for people extraction
     raw_html: str = field(default="", repr=False)
@@ -277,8 +280,11 @@ class CrawlResult:
     # Derived signals for report display
     has_media_mentions: bool = False     # "as seen on" / press logos on homepage
     has_stat_counters: bool = False      # "1,200+ projects" style counters
-    has_ratings_widget: bool = False     # Trustpilot / Google rating widget
+    has_ratings_widget: bool = False     # Trustpilot / Google rating widget (text/DOM signal)
+    has_reviews_widget: bool = False     # JS review widget (Trustindex, Elfsight, etc.)
+    has_rating_schema: bool = False      # AggregateRating / Review in JSON-LD
     has_corp_registration: bool = False  # EIN, LLC, incorporation mention
+    multiple_h1_pages: list[str] = field(default_factory=list)  # pages with >1 H1
     people_with_bios: int = 0           # count of people with bios (from people list)
     people_with_credentials: int = 0    # count of people with credential keywords
     # Schema quality (from homepage)
@@ -411,7 +417,10 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
     result.pages_crawled += 1
     result.homepage_url = homepage_snap.url
     result.has_ssl = homepage_snap.url.startswith("https://")
+    # Add both with and without trailing slash so BFS never re-fetches the homepage
     seen.add(homepage_snap.url)
+    seen.add(homepage_snap.url.rstrip("/"))
+    seen.add(homepage_snap.url.rstrip("/") + "/")
 
     # Seed keyword for service page discovery
     if not main_keyword and homepage_soup is not None:
@@ -424,6 +433,9 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
                 continue
             snap, soup = _fetch_and_analyze(session, url, domain, timeout, page_type, result)
             if snap is not None:
+                # Skip if redirect landed on a page we already have
+                if snap.url in seen:
+                    continue
                 return snap, soup
         return None, None
 
@@ -451,8 +463,9 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
                         abs_url = urljoin(result.homepage_url, href).split("#")[0]
                         if _is_internal(abs_url, result.domain) and abs_url not in seen:
                             about_snap, _ = _fetch_and_analyze(session, abs_url, domain, timeout, "about", result)
-                            if about_snap:
+                            if about_snap and about_snap.url not in seen:
                                 break
+                            about_snap = None
 
         if about_snap:
             result.pages_analyzed.append(about_snap)
@@ -460,7 +473,7 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
             result.about_url = about_snap.url
             seen.add(about_snap.url)
 
-    # 2c. Contact page
+    # 2c. Contact page — nav scan first, then path guesses, then footer fallback
     if len(result.pages_analyzed) < max_pages:
         contact_candidates = []
         if homepage_soup is not None:
@@ -470,25 +483,58 @@ def crawl_domain(domain: str, max_pages: int = 10, timeout: int = 15, main_keywo
         contact_candidates += [f"https://{domain}{p}" for p in _CONTACT_PATHS]
 
         contact_snap, _ = _targeted_fetch(contact_candidates, "contact")
+
+        # Footer fallback (contact links live in footers on most sites)
+        if contact_snap is None and homepage_soup is not None:
+            footer = homepage_soup.find("footer")
+            if footer:
+                for a in footer.find_all("a", href=True):
+                    href = a["href"].strip()
+                    if not href:
+                        continue
+                    text = a.get_text(" ", strip=True).lower()
+                    if any(kw in text or kw in href.lower()
+                           for kw in ("contact", "get in touch", "reach us", "support")):
+                        abs_url = urljoin(result.homepage_url, href).split("#")[0]
+                        if _is_internal(abs_url, result.domain) and abs_url not in seen:
+                            contact_snap, _ = _fetch_and_analyze(
+                                session, abs_url, domain, timeout, "contact", result
+                            )
+                            if contact_snap and contact_snap.url not in seen:
+                                break
+                            contact_snap = None
+
         if contact_snap:
             result.pages_analyzed.append(contact_snap)
             result.pages_crawled += 1
             result.contact_url = contact_snap.url
             seen.add(contact_snap.url)
 
-    # 2d. Service page (matches the business's primary keyword)
+    # 2d. Service page (wildcard 1 — matches the business's primary keyword)
     if len(result.pages_analyzed) < max_pages and homepage_soup is not None:
         service_url = _find_service_page_url(homepage_soup, domain, main_keyword)
         if service_url and service_url not in seen:
             service_snap, _ = _fetch_and_analyze(
                 session, service_url, domain, timeout, "service", result
             )
-            if service_snap:
+            if service_snap and service_snap.url not in seen:
                 result.pages_analyzed.append(service_snap)
                 result.pages_crawled += 1
                 result.service_url = service_snap.url
                 result.service_keyword = main_keyword
                 seen.add(service_snap.url)
+
+    # 2e. Blog post (wildcard 2 — for authorship detection)
+    if len(result.pages_analyzed) < max_pages and homepage_soup is not None:
+        blog_url = _find_blog_post_url(homepage_soup, domain)
+        if blog_url and blog_url not in seen:
+            blog_snap, _ = _fetch_and_analyze(
+                session, blog_url, domain, timeout, "other", result
+            )
+            if blog_snap and blog_snap.url not in seen:
+                result.pages_analyzed.append(blog_snap)
+                result.pages_crawled += 1
+                seen.add(blog_snap.url)
 
     # ── Phase 2: BFS for remaining page budget ─────────────────────────────
 
@@ -734,6 +780,7 @@ def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms:
     h2_h3 = soup.find_all(["h2", "h3"])
     snap.h2_count = len(soup.find_all("h2"))
     snap.h3_count = len(soup.find_all("h3"))
+    snap.h1_count = len(soup.find_all("h1"))
 
     answer_capsule_count = 0
     question_heading_count = 0
@@ -791,6 +838,8 @@ def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms:
     snap.has_media_mentions = cred.get("has_media_mentions", False)
     snap.has_stat_counters = cred.get("has_stat_counters", False)
     snap.has_ratings_widget = cred.get("has_ratings_widget", False)
+    snap.has_reviews_widget = cred.get("has_reviews_widget", False)
+    snap.has_rating_schema = cred.get("has_rating_schema", False)
     snap.has_corp_registration = cred.get("has_corp_registration", False)
 
     return snap
@@ -1419,7 +1468,12 @@ def _aggregate(result: CrawlResult) -> None:
         result.has_media_mentions = homepage_snap.has_media_mentions
         result.has_stat_counters = homepage_snap.has_stat_counters
         result.has_ratings_widget = homepage_snap.has_ratings_widget
+        result.has_reviews_widget = homepage_snap.has_reviews_widget
+        result.has_rating_schema = homepage_snap.has_rating_schema
         result.has_corp_registration = homepage_snap.has_corp_registration
+        result.multiple_h1_pages = [
+            p.url for p in pages if getattr(p, "h1_count", 0) > 1
+        ]
 
     # Schema quality — taken from homepage (most important page for entity graph)
     if homepage_snap:
@@ -1797,10 +1851,14 @@ def _compute_credibility_score(result: CrawlResult) -> int:
 
     # --- Authoritativeness (0-100) ---
     authoritativeness = 0
-    if result.has_ratings_widget:
-        authoritativeness += 50
+    if result.has_rating_schema:
+        authoritativeness += 60  # full credit: AI engines can read this
+    elif result.has_reviews_widget:
+        authoritativeness += 25  # partial: visible to humans, hidden to AI
+    elif result.has_ratings_widget:
+        authoritativeness += 40
     if result.has_trust_signals_on_homepage:
-        authoritativeness += 50
+        authoritativeness += 40
 
     # --- Trustworthiness (0-100) ---
     trustworthiness = 0
@@ -2196,6 +2254,46 @@ def _find_service_page_url(soup: BeautifulSoup, domain: str, main_keyword: str =
     return candidates[0][1]
 
 
+def _find_blog_post_url(soup: BeautifulSoup, domain: str) -> Optional[str]:
+    """
+    Find a blog/article post link from homepage or footer links.
+
+    Strategy:
+    1. Look for nav/footer links whose path or text contains blog/news/resources.
+    2. Among those, prefer deeper paths (likely posts, not index pages).
+    3. Fall back to any internal link with /blog/, /post/, /article/ in path.
+    """
+    _BLOG_SECTION_RE = re.compile(r"/(blog|news|article|insight|resource|post)s?(/|$)", re.I)
+    _BLOG_POST_RE    = re.compile(r"/(blog|news|article|insight|resource|post)s?/[^/]+", re.I)
+
+    post_candidates: list[str] = []
+    index_candidates: list[str] = []
+
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if not href or href.startswith("#") or href.startswith("mailto:"):
+            continue
+        if href.startswith("/"):
+            abs_url = f"https://{domain}{href.split('?')[0]}"
+        elif _is_internal(href, domain):
+            abs_url = href.split("?")[0]
+        else:
+            continue
+
+        path = urlparse(abs_url).path.rstrip("/").lower()
+        if _BLOG_POST_RE.search(path):
+            post_candidates.append(abs_url)
+        elif _BLOG_SECTION_RE.search(path):
+            index_candidates.append(abs_url)
+
+    # Prefer an actual post (deeper path); fall back to index page if nothing better
+    if post_candidates:
+        return post_candidates[0]
+    if index_candidates:
+        return index_candidates[0]
+    return None
+
+
 def _derive_main_keyword(soup: BeautifulSoup, domain: str) -> str:
     """
     Derive a rough primary service keyword from homepage H1 or title.
@@ -2333,8 +2431,37 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
     # NEEATT: Experience — stat counters (quantified track record)
     has_stat_counters = any(re.search(p, page_text) for p in _EXPERIENCE_PATTERNS)
 
-    # NEEATT: Authoritativeness — third-party ratings/reviews widget
+    # NEEATT: Authoritativeness — third-party ratings/reviews widget (text patterns)
     has_ratings_widget = any(re.search(p, page_text) for p in _RATINGS_PATTERNS)
+
+    # JS review widget detection — DOM signatures for popular embed widgets.
+    # These render client-side so AI crawlers cannot read the actual ratings.
+    _JS_WIDGET_SIGNATURES = [
+        "trustindex", "ti-widget", "ti-stars", "ti-star",        # Trustindex
+        "elfsight-app", "elfsight",                               # Elfsight
+        "embedsocial",                                            # EmbedSocial
+        "widgetpack", "reviewsig",                                # others
+        "google-reviews-widget", "grade.us",
+        "reviewshake",
+    ]
+    raw_html_lower = str(soup).lower()
+    has_reviews_widget = any(sig in raw_html_lower for sig in _JS_WIDGET_SIGNATURES)
+
+    # AggregateRating / Review schema — this is what AI engines can actually read
+    has_rating_schema = False
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "{}")
+            schema_str = json.dumps(data).lower()
+            if "aggregaterating" in schema_str or '"review"' in schema_str:
+                has_rating_schema = True
+                break
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # Also check plain meta/microdata ratingValue
+    if not has_rating_schema:
+        if soup.find(attrs={"itemprop": re.compile(r"ratingValue|aggregateRating", re.I)}):
+            has_rating_schema = True
 
     # NEEATT: Transparency — corporate registration signals
     has_corp_registration = any(re.search(p, page_text) for p in _CORP_REGISTRATION_PATTERNS)
@@ -2349,5 +2476,7 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
         "has_media_mentions": has_media_mentions,
         "has_stat_counters": has_stat_counters,
         "has_ratings_widget": has_ratings_widget,
+        "has_reviews_widget": has_reviews_widget,
+        "has_rating_schema": has_rating_schema,
         "has_corp_registration": has_corp_registration,
     }

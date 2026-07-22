@@ -124,7 +124,16 @@ def _no_trust_signals(crawl, matrix) -> bool:
 def _no_ratings(crawl, matrix) -> bool:
     # Only flag if no trust signals of any kind
     return (not getattr(crawl, "has_ratings_widget", False)
+            and not getattr(crawl, "has_reviews_widget", False)
             and not crawl.has_trust_signals_on_homepage)
+
+def _reviews_widget_no_schema(crawl, matrix) -> bool:
+    # Widget present but no AggregateRating schema — AI can't read the reviews
+    return (getattr(crawl, "has_reviews_widget", False)
+            and not getattr(crawl, "has_rating_schema", False))
+
+def _multiple_h1(crawl, matrix) -> bool:
+    return bool(getattr(crawl, "multiple_h1_pages", []))
 
 def _no_privacy_policy(crawl, matrix) -> bool:
     return not crawl.has_privacy_policy
@@ -440,6 +449,34 @@ CHECKLIST: list[ChecklistEntry] = [
             "Embed a Trustpilot, Google Business Profile, or BBB widget that shows "
             "your aggregate rating. Third-party ratings are the Authoritativeness signal "
             "AI engines can cross-reference independently."
+        ),
+    ),
+    ChecklistEntry(
+        signal_fn=_reviews_widget_no_schema,
+        title="Add AggregateRating schema — reviews are hidden from AI engines",
+        priority="MEDIUM",
+        tag="FOUNDATION",
+        bucket="credibility",
+        page_scope="Homepage",
+        first_step=(
+            "A review widget is present and visible to human visitors, but AI engines "
+            "cannot read it because there is no AggregateRating structured data. Add a "
+            "JSON-LD AggregateRating block to the homepage with ratingValue, reviewCount, "
+            "and bestRating. This makes your rating machine-readable and citable."
+        ),
+    ),
+    ChecklistEntry(
+        signal_fn=_multiple_h1,
+        title="Fix multiple H1 tags — conflicting page targets confuse AI",
+        priority="MEDIUM",
+        tag="FOUNDATION",
+        bucket="indexability",
+        page_scope="Affected pages",
+        first_step=(
+            "One or more pages have more than one H1 tag. Each page should declare a "
+            "single primary topic via one H1. AI engines use the H1 as the canonical "
+            "answer to 'what is this page about?' — multiple H1s signal a targeting "
+            "conflict and dilute citation relevance."
         ),
     ),
     ChecklistEntry(
