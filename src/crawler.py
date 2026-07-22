@@ -1098,8 +1098,14 @@ def _analyze_schema_graph(soup: BeautifulSoup) -> dict:
             if t and t not in all_type_strings:
                 all_type_strings.append(t)
 
+    # Normalize: LocalBusiness points only apply to local sites.
+    # Without LB, max achievable is 70 (Org 50 + WebSite 20). Renormalize to 100
+    # so a fully-complete national/SaaS site can score 100, not 70.
+    max_applicable = 95 if has_lb else 70
+    normalized = round(min(score, max_applicable) * 100 / max_applicable) if max_applicable else 0
+
     return {
-        "quality_score": max(0, min(100, score)),
+        "quality_score": max(0, min(100, normalized)),
         "entities": all_type_strings,
         "missing_props": missing,
     }
@@ -2150,8 +2156,10 @@ _RATINGS_PATTERNS = [
 ]
 
 _CORP_REGISTRATION_PATTERNS = [
-    r"\bein\b", r"\bein[:\s]?\d{2}-\d{7}\b",
-    r"\bllc\b", r"\binc\b", r"\b(?:incorporated|corporation|registered\s+(?:business|company))\b",
+    r"\bein[:\s#]?\s*\d{2}[-\s]\d{7}\b",   # EIN with actual number (not bare "Inc.")
+    r"\b(?:company|business)\s+(?:number|no\.?|reg\.?|#)\s*\d+",
+    r"\b(?:incorporated|corporation)\b",
+    r"\bregistered\s+(?:business|company|in\s+[A-Z][a-z]+)\b",
     r"\bregistration\s+(?:number|no\.?)\b",
     r"\bcompany\s+(?:number|no\.?|reg\.?)\b",
 ]
@@ -2190,8 +2198,8 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
     # Email detection
     has_email = bool(re.search(r"\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b", page_text))
 
-    # Enhanced NAP: phone OR address OR email
-    has_nap = bool(_PHONE_RE.search(page_text)) or has_email
+    # NAP requires phone OR physical address — email alone is not NAP
+    has_nap = bool(_PHONE_RE.search(page_text))
     if not has_nap:
         has_nap = bool(re.search(
             r"\b\d{1,5}\s+\w[\w\s]{2,30}"
@@ -2201,15 +2209,22 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
     if not has_nap and footer_text:
         has_nap = bool(_PHONE_RE.search(footer_text))
 
-    # Trust signals: testimonials, reviews, ratings, client logos, case studies
+    # Trust signals — scan body content only (exclude nav/header to avoid false positives
+    # from link text like "Read reviews →" or "Review our terms")
+    _trust_scope = soup.find("main") or soup.find("article") or soup.find("body") or soup
+    for _excl_tag in ("nav", "header"):
+        for _el in _trust_scope.find_all(_excl_tag):
+            _el.decompose()
+    _trust_text = _trust_scope.get_text(" ", strip=True).lower()
     _TRUST_PATTERNS = [
-        r"\btestimonial", r"\breview", r"\brating", r"\b\d+\s*stars?\b",
+        r"\btestimonial", r"\breview[s\s]", r"\bratings?\s+(?:widget|score|badge|\d)",
+        r"\b\d+\s*stars?\b",
         r"\bclient\s+(?:story|spotlight|result|success)",
         r"\bcase\s+stud", r"\btrusted\s+by", r"\bused\s+by",
-        r"\bcertif(?:ied|ication)", r"\baward",
+        r"\bcertif(?:ied|ication)", r"\baward(?:ed|s?\s+(?:by|winner|finalist))",
         r"\b\d{1,3}[\s,]\d{3}\+?\s*(?:customer|client|user)",
     ]
-    has_trust = any(re.search(p, page_text) for p in _TRUST_PATTERNS)
+    has_trust = any(re.search(p, _trust_text) for p in _TRUST_PATTERNS)
 
     # Social media links — count distinct platform domains
     _CREDIBILITY_SOCIAL_PLATFORMS = (

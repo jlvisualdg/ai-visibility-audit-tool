@@ -78,13 +78,14 @@ def _weak_schema(crawl, matrix) -> bool:
     return 40 <= crawl.schema_quality_score < 70
 
 def _schema_missing_org(crawl, matrix) -> bool:
-    return any("Organization" in p for p in crawl.schema_missing_props)
+    # Only surface granular card when the coarse "poor schema" card isn't already firing
+    return crawl.schema_quality_score >= 40 and any("Organization" in p for p in crawl.schema_missing_props)
 
 def _schema_missing_sameas(crawl, matrix) -> bool:
-    return any("sameAs" in p for p in crawl.schema_missing_props)
+    return crawl.schema_quality_score >= 40 and any("sameAs" in p for p in crawl.schema_missing_props)
 
 def _schema_missing_website(crawl, matrix) -> bool:
-    return any("WebSite" in p for p in crawl.schema_missing_props)
+    return crawl.schema_quality_score >= 40 and any("WebSite" in p for p in crawl.schema_missing_props)
 
 def _no_authorship(crawl, matrix) -> bool:
     return crawl.authorship_pages == 0 and crawl.total_pages >= 3
