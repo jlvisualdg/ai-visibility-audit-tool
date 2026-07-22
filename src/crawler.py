@@ -2210,12 +2210,16 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
         has_nap = bool(_PHONE_RE.search(footer_text))
 
     # Trust signals — scan body content only (exclude nav/header to avoid false positives
-    # from link text like "Read reviews →" or "Review our terms")
-    _trust_scope = soup.find("main") or soup.find("article") or soup.find("body") or soup
-    for _excl_tag in ("nav", "header"):
-        for _el in _trust_scope.find_all(_excl_tag):
-            _el.decompose()
-    _trust_text = _trust_scope.get_text(" ", strip=True).lower()
+    # from link text like "Read reviews →" or "Review our terms").
+    # Walk the tree without mutating it so all_links references stay valid.
+    _TRUST_EXCLUDE = {"nav", "header", "script", "style"}
+    _body_el = soup.find("body") or soup
+    _trust_parts = [
+        child.get_text(" ", strip=True)
+        for child in _body_el.find_all(recursive=False)
+        if getattr(child, "name", None) not in _TRUST_EXCLUDE
+    ]
+    _trust_text = " ".join(_trust_parts).lower()
     _TRUST_PATTERNS = [
         r"\btestimonial", r"\breview[s\s]", r"\bratings?\s+(?:widget|score|badge|\d)",
         r"\b\d+\s*stars?\b",
