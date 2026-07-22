@@ -1229,6 +1229,33 @@ def _extract_people(soup: BeautifulSoup, url: str) -> list[PersonSignal]:
         if len(people) >= 10:
             break
 
+    # 4. Person-dedicated page fallback (e.g. /about-dr-john-smith)
+    # When none of the above methods found anyone but the URL itself names a person.
+    if not people:
+        from urllib.parse import urlparse as _up
+        _path = _up(url).path.lower()
+        _is_person_page = bool(re.search(r"/about-[a-z]", _path))
+        if _is_person_page:
+            # Try to extract name from H1 (strip leading "About" prefix)
+            for h in soup.find_all(["h1", "h2"]):
+                raw = h.get_text(" ", strip=True)
+                # Strip "About " prefix
+                name_candidate = re.sub(r"^about\s+", "", raw, flags=re.I).strip()
+                # Remove role suffix after comma
+                name_candidate = name_candidate.split(",")[0].strip()
+                words = name_candidate.split()
+                if 2 <= len(words) <= 5:
+                    page_text = soup.get_text(" ", strip=True)
+                    has_bio = len(page_text.split()) >= 100
+                    has_creds = bool(_CREDENTIALS_RE.search(page_text))
+                    # Role from second H1 or h2 subtitle
+                    role = ""
+                    all_h1 = soup.find_all("h1")
+                    if len(all_h1) >= 2:
+                        role = all_h1[1].get_text(" ", strip=True).split(",")[-1].strip()
+                    _add_person(name_candidate, role, has_bio, has_creds)
+                    break
+
     return people[:10]
 
 
