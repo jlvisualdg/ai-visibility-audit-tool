@@ -166,7 +166,9 @@ def _sample_report(domain: str = "example.com") -> AuditReport:
 
 def _render(report: AuditReport) -> str:
     """Render the template with the given report and return HTML string."""
+    from src.aeo_score import score_label, score_color_class, bucket_label
     template = _env().get_template("report.html")
+    aeo_score = 42
     return template.render(
         report=report,
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -174,6 +176,17 @@ def _render(report: AuditReport) -> str:
         brand_name=report.domain.split(".")[0].capitalize(),
         brand_slogan="AI Engine Optimization Audit",
         website_url=f"https://{report.domain}",
+        aeo_score=aeo_score,
+        aeo_label=score_label(aeo_score),
+        aeo_color_class=score_color_class(aeo_score),
+        visibility_score=50.0,
+        visibility_label=bucket_label(50),
+        credibility_score=30.0,
+        credibility_label=bucket_label(30),
+        citation_score=30.0,
+        indexability_score=55.0,
+        indexability_label=bucket_label(55),
+        competitive_data=[],
     )
 
 
@@ -195,15 +208,17 @@ class TestTemplateStructure:
         assert "header-url" in self.html, "Website URL missing"
         assert "header-date" in self.html, "Report date missing"
 
-    def test_verdict_section_present(self):
-        """Section 2: Verdict with 3-takeaway format (Target Insights, Top Brand Metrics, Audit Conclusions)."""
-        assert "verdict" in self.html.lower(), "Verdict section missing"
-        assert "Target Insights" in self.html, "Target Insights takeaway missing"
-        assert "Top Brand Metrics" in self.html, "Top Brand Metrics takeaway missing"
-        assert "Audit Conclusions" in self.html, "Audit Conclusions takeaway missing"
+    def test_diagnostic_section_present(self):
+        """Section 2: Diagnostic with BE THE ANSWER score hero and 3 sub-score cards."""
+        assert "diagnostic" in self.html.lower(), "Diagnostic section missing"
+        assert "BE THE ANSWER" in self.html, "Score label 'BE THE ANSWER' missing"
+        assert "subscore-trio" in self.html, "Sub-score trio missing"
+        assert "Visibility" in self.html, "Visibility sub-score missing"
+        assert "Credibility" in self.html, "Credibility sub-score missing"
+        assert "Indexability" in self.html, "Indexability sub-score missing"
 
     def test_matrix_section_present(self):
-        """Section 3: Brand Recommendation Matrix (5×4 table)."""
+        """Section 3: Brand Recommendation Matrix."""
         assert "Brand Recommendation Matrix" in self.html, "Matrix section title missing"
         assert '<table class="matrix-table"' in self.html, "Matrix table missing"
 
@@ -211,29 +226,25 @@ class TestTemplateStructure:
         """Section 4: TOP Recommended Brands (top 3)."""
         assert "TOP Recommended Brands" in self.html, "Top brands section title missing"
         assert "top-brand-rank" in self.html, "Top brand rank indicators missing"
-        # Should show exactly 3 items
         assert self.html.count("top-brand-rank") >= 1, "No top brand items rendered"
 
     def test_competitive_landscape_present(self):
-        """Section 5: Competitive Landscape (6 columns)."""
+        """Section 5: Competitive Landscape."""
         assert "Competitive Landscape" in self.html, "Landscape section title missing"
         assert '<table class="landscape-table"' in self.html, "Landscape table missing"
-        assert "Brand Mentions" in self.html, "Landscape column 'Brand Mentions' missing"
-        assert "URL Citations" in self.html, "Landscape column 'URL Citations' missing"
-        assert "1st Mention" in self.html, "Landscape column '1st Mention' missing"
-        assert "Top Competitor" in self.html, "Landscape column 'Top Competitor' missing"
+        assert "Target URLs" in self.html, "Landscape column 'Target URLs' missing"
 
     def test_indexability_audit_present(self):
-        """Section 6: AI Indexability Audit with reworded signal cards."""
-        assert "AI Indexability Audit" in self.html, "Indexability section title missing"
-        assert "Indexability Score" in self.html or "AI Indexability Score" in self.html, \
+        """Indexability bucket section with signal cards."""
+        assert "Indexability" in self.html, "Indexability section missing"
+        assert "Indexability Score" in self.html or "Agent Indexability Score" in self.html, \
             "Indexability score label missing"
         assert "signal-grid" in self.html, "Signal grid missing"
 
-    def test_topics_to_optimize_present(self):
-        """Section 7: Topics to Optimize with dropdown."""
-        assert "Topics to Optimize" in self.html, "Topics section title missing"
-        assert "topic-chip" in self.html, "Topic chips missing"
+    def test_fix_list_present(self):
+        """Your AEO Fix List section present."""
+        assert "Your AEO Fix List" in self.html, "Fix list section title missing"
+        assert "fix-list" in self.html, "Fix list container missing"
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +271,11 @@ class TestTemplateStructuralIntegrity:
         assert "Poppins" in self.html, "Poppins font not referenced"
         assert "Mulish" in self.html, "Mulish font not referenced"
 
-    def test_dropdown_js_present(self):
-        """Verify minimal JS for dropdown toggle only."""
-        assert "toggleZeroTopics" in self.html, "Dropdown toggle function missing"
-        assert "function toggleZeroTopics()" in self.html, "toggleZeroTopics function definition missing"
-        assert "zeroTopicsToggle" in self.html, "Toggle button ID missing"
-        assert "zeroTopicsDropdown" in self.html, "Dropdown container ID missing"
+    def test_bucket_color_tokens_present(self):
+        """Verify bucket CSS color tokens are defined."""
+        assert "--bucket-vis-fg" in self.html, "Visibility bucket color token missing"
+        assert "--bucket-cred-fg" in self.html, "Credibility bucket color token missing"
+        assert "--bucket-idx-fg" in self.html, "Indexability bucket color token missing"
 
     def test_no_excessive_js(self):
         """Verify no large JS frameworks or excessive scripting."""
@@ -292,7 +302,8 @@ class TestJinja2VariableCompatibility:
     """Verify template works with the existing AuditReport + new top-level vars."""
 
     def test_render_with_all_new_variables(self):
-        """Template renders with explicit brand_name, brand_slogan, website_url."""
+        """Template renders with explicit brand_name, brand_slogan, website_url and score vars."""
+        from src.aeo_score import score_label, score_color_class, bucket_label
         template = _env().get_template("report.html")
         html = template.render(
             report=_sample_report(),
@@ -301,6 +312,17 @@ class TestJinja2VariableCompatibility:
             brand_name="Smart Marketer",
             brand_slogan="AI Engine Optimization Audits",
             website_url="https://smartmarketer.com",
+            aeo_score=55,
+            aeo_label=score_label(55),
+            aeo_color_class=score_color_class(55),
+            visibility_score=60.0,
+            visibility_label=bucket_label(60),
+            credibility_score=40.0,
+            credibility_label=bucket_label(40),
+            citation_score=40.0,
+            indexability_score=50.0,
+            indexability_label=bucket_label(50),
+            competitive_data=[],
         )
         assert "Smart Marketer" in html
         assert "AI Engine Optimization Audits" in html
@@ -327,8 +349,8 @@ class TestJinja2VariableCompatibility:
         )
         html = _render(report)
         assert "empty.com" in html, "Domain not in output"
-        assert "Verdict" in html, "Verdict section not rendered"
-        assert "AI Indexability Audit" in html, "Indexability section not rendered"
+        assert "BE THE ANSWER" in html, "Score hero section not rendered"
+        assert "Indexability" in html, "Indexability section not rendered"
 
     def test_generated_at_renders(self):
         """Verify generated_at date appears in the header."""
@@ -367,10 +389,10 @@ class TestContentValidation:
         assert "best CRM" in self.html or "buyer_topics" not in self.html, \
             "Buyer topics not rendered"
 
-    def test_strategic_read_rendered(self):
-        """Verify the strategic read section renders (no The Play — recommendations removed)."""
-        assert "The Strategic Read" in self.html
-        assert "The Play" not in self.html, "The Play should have been removed"
+    def test_aeo_score_rendered(self):
+        """Verify the AEO score value appears in the diagnostic section."""
+        assert "42" in self.html, "AEO score value not rendered"
+        assert "BE THE ANSWER" in self.html, "Score label not rendered"
 
     def test_fixes_rendered(self):
         """Verify template can contain fix recommendations (optional section)."""
@@ -410,7 +432,7 @@ class TestEdgeCases:
         report = _sample_report()
         report.citation_matrix.results = []
         html = _render(report)
-        assert "Verdict" in html, "Verdict section missing"
+        assert "BE THE ANSWER" in html, "Diagnostic section missing"
         assert "Brand Recommendation Matrix" not in html, \
             "Matrix should be hidden with no results"
 

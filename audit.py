@@ -573,6 +573,7 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
             target_domain=domain,
             ai_presence_pct=aggregate["ai_presence_pct"],
             indexability_score=crawl.health_score,
+            credibility_score=crawl.credibility_score,
         )
 
         # ── 5. Build CitationMatrix for template compatibility ──
@@ -603,6 +604,7 @@ def main(domain: str, max_pages: int, no_ai: bool, passes: int, output: str):
         aeo_score=scores["aeo_score"],
         visibility_score=scores["visibility_score"],
         citation_score=scores["citation_score"],
+        credibility_score=scores["credibility_score"],
         indexability_score=scores["indexability_score"],
         # v2.0 variables
         ai_presence_pct=aggregate["ai_presence_pct"],

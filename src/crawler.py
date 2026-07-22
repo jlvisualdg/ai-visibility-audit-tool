@@ -171,6 +171,7 @@ class PageSnapshot:
     has_nap_signals: bool = False   # phone number or physical address
     has_trust_signals: bool = False  # testimonials, reviews, client logos
     has_social_links: bool = False
+    social_channel_count: int = 0
 
 
 @dataclass
@@ -235,6 +236,8 @@ class CrawlResult:
     has_contact_info_on_homepage: bool = False
     has_trust_signals_on_homepage: bool = False
     has_social_links: bool = False
+    social_channel_count: int = 0
+    credibility_score: int = 0
 
     @property
     def total_pages(self) -> int:
@@ -716,6 +719,7 @@ def _extract_page_signals(html: str, url: str, size_bytes: int = 0, response_ms:
     snap.has_nap_signals = cred["has_nap_signals"]
     snap.has_trust_signals = cred["has_trust_signals"]
     snap.has_social_links = cred["has_social_links"]
+    snap.social_channel_count = cred.get("social_channel_count", 0)
 
     return snap
 
@@ -973,6 +977,7 @@ def _aggregate(result: CrawlResult) -> None:
         result.has_contact_info_on_homepage = homepage_snap.has_nap_signals
         result.has_trust_signals_on_homepage = homepage_snap.has_trust_signals
         result.has_social_links = homepage_snap.has_social_links
+        result.social_channel_count = homepage_snap.social_channel_count
 
     # Agent readability aggregates
     if pages:
@@ -1163,49 +1168,44 @@ def _aggregate(result: CrawlResult) -> None:
 
     result.issues = issues
     result.health_score = _compute_health_score(result)
+    result.credibility_score = _compute_credibility_score(result)
 
 
 def _compute_health_score(result: CrawlResult) -> int:
-    """Composite 0-100 health score from site-level signals.
+    """Indexability sub-score (0-100) — technical AI-readiness signals only.
+
+    Credibility signals (about/contact/NAP/trust/social/privacy/terms) have
+    been moved to _compute_credibility_score.  This function now reflects
+    purely technical crawlability/indexability factors.
 
     Caps:
-      - Score cannot exceed 80 if any medium+ severity issues exist.
       - Score cannot exceed 60 if any critical severity issues exist.
-      - Capping is applied AFTER all bonuses and penalties.
-
-    Bonuses:
-      - About page: +5 (was +3) — AI engines use About pages for entity grounding.
-      - Contact page: +3 (was +2) — NAP signals strengthen local/AI entity recognition.
+      - Score cannot exceed 75 if any high severity issues exist.
+      - Score cannot exceed 85 if any medium severity issues exist.
     """
     if result.total_pages == 0:
         return 0
 
     score = 100
 
-    # Big deductions
+    # Content quality
     if result.answer_capsules == 0:
         score -= 20
     if result.schema_pages == 0:
-        score -= 10
-    if result.authorship_pages == 0:
         score -= 10
 
     # Small deductions per thin page (cap at 15)
     score -= min(15, len(result.thin_pages) * 3)
 
-    # Penalty for blocking AI
+    # AI access
     if result.robots_blocks_ai:
         score -= 20
 
-    # Bonus for having the new files
+    # AI discoverability
     if result.has_llms_txt:
-        score += 3
+        score += 5
 
-    # v1.1 signals
-    if result.has_about_page:
-        score += 5  # increased from 3 — stronger signal for entity grounding
-    if result.has_contact_page:
-        score += 3  # increased from 2 — NAP signals matter for local/entity AI
+    # Technical health
     if result.max_redirect_hops > 1:
         score -= 3
     if result.broken_links:
@@ -1215,24 +1215,16 @@ def _compute_health_score(result: CrawlResult) -> int:
     elif result.avg_response_ms > 1500:
         score -= 5
 
+    # Security
+    if not result.has_ssl:
+        score -= 10
+
     # Agent readability
     if result.pages_with_landmarks == 0:
         score -= 5
     score += min(5, result.pages_with_landmarks)
-
-    # ── Credibility signals ──
-    if not result.has_ssl:
-        score -= 15
-    if result.has_privacy_policy:
-        score += 3
-    if result.has_terms:
-        score += 2
-    if result.has_contact_info_on_homepage:
-        score += 3
-    if result.has_trust_signals_on_homepage:
-        score += 5
-    if result.has_social_links:
-        score += 2
+    if result.total_images_missing_alt > 10:
+        score -= 3
 
     # ── Apply caps based on issue severity ──
     severities = result.issues_by_severity
@@ -1246,6 +1238,52 @@ def _compute_health_score(result: CrawlResult) -> int:
     # Cap at 85 if any medium issues
     elif severities.get("medium", 0) > 0:
         score = min(score, 85)
+
+    return max(0, min(100, score))
+
+
+def _compute_credibility_score(result: CrawlResult) -> int:
+    """Credibility sub-score (0-100) from entity/trust signals.
+
+    Signals: authorship, social channels (>=3), trust/reviews, NAP, about/contact,
+    privacy/terms policy.
+    """
+    score = 0
+
+    # Authorship (most important credibility signal) — 30 pts
+    if result.authorship_pages > 0:
+        ratio = result.authorship_pages / max(result.total_pages, 1)
+        score += int(30 * min(ratio * 2, 1.0))  # full at 50%+ coverage
+
+    # Social channel count (>=3 = pass) — 20 pts
+    if result.social_channel_count >= 3:
+        score += 20
+    elif result.social_channel_count >= 1:
+        score += 8
+
+    # Trust signals (reviews, testimonials, client logos) — 15 pts
+    if result.has_trust_signals_on_homepage:
+        score += 15
+
+    # NAP (name/address/phone on homepage) — 10 pts
+    if result.has_contact_info_on_homepage:
+        score += 10
+
+    # About page — 10 pts
+    if result.has_about_page:
+        score += 10
+
+    # Contact page — 5 pts
+    if result.has_contact_page:
+        score += 5
+
+    # Privacy policy — 5 pts
+    if result.has_privacy_policy:
+        score += 5
+
+    # Terms of service — 5 pts
+    if result.has_terms:
+        score += 5
 
     return max(0, min(100, score))
 
@@ -1640,11 +1678,19 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
     ]
     has_trust = any(re.search(p, page_text) for p in _TRUST_PATTERNS)
 
-    # Social media links
-    has_social = any(
-        any(sd in a.get("href", "") for sd in _SOCIAL_DOMAINS)
-        for a in all_links
+    # Social media links — count distinct platform domains
+    _CREDIBILITY_SOCIAL_PLATFORMS = (
+        "facebook.com", "twitter.com", "x.com", "linkedin.com",
+        "instagram.com", "youtube.com", "tiktok.com", "pinterest.com",
     )
+    seen_platforms: set[str] = set()
+    for a in all_links:
+        href = a.get("href", "")
+        for platform in _CREDIBILITY_SOCIAL_PLATFORMS:
+            if platform in href:
+                seen_platforms.add(platform)
+    social_channel_count = len(seen_platforms)
+    has_social = social_channel_count >= 1
 
     return {
         "has_privacy_link": has_privacy,
@@ -1652,4 +1698,5 @@ def _extract_credibility_signals(soup: BeautifulSoup, url: str) -> dict:
         "has_nap_signals": has_nap,
         "has_trust_signals": has_trust,
         "has_social_links": has_social,
+        "social_channel_count": social_channel_count,
     }

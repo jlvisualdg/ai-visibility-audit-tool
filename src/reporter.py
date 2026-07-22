@@ -154,6 +154,7 @@ def generate_report(
     aeo_score: Optional[int] = None,
     visibility_score: Optional[float] = None,
     citation_score: Optional[float] = None,
+    credibility_score: Optional[float] = None,
     indexability_score: Optional[float] = None,
     # ── v2.0 pipeline variables ──
     ai_presence_pct: Optional[float] = None,
@@ -214,15 +215,21 @@ def generate_report(
 
     # Fallback composite score from old formula when not supplied
     if aeo_score is None:
-        from src.aeo_score import compute_aeo_score, score_label, score_color_class
+        from src.aeo_score import compute_aeo_score, score_label, score_color_class, bucket_label
         _vis = float(ai_presence_pct or 0)
         _idx = float(getattr(report.crawl_signals, "health_score", 0))
-        aeo_score = compute_aeo_score(_vis, 0.0, _idx)
+        _cred = float(getattr(report.crawl_signals, "credibility_score", 0))
+        aeo_score = compute_aeo_score(_vis, _cred, _idx)
         visibility_score  = _vis
+        credibility_score = _cred
         citation_score    = 0.0
         indexability_score = _idx
     else:
-        from src.aeo_score import score_label, score_color_class
+        from src.aeo_score import score_label, score_color_class, bucket_label
+
+    _vis_f  = round(float(visibility_score or 0), 1)
+    _cred_f = round(float(credibility_score or 0), 1)
+    _idx_f  = round(float(indexability_score or 0), 1)
 
     html = template.render(
         report=report,
@@ -232,9 +239,13 @@ def generate_report(
         aeo_score=aeo_score,
         aeo_label=score_label(aeo_score),
         aeo_color_class=score_color_class(aeo_score),
-        visibility_score=round(float(visibility_score or 0), 1),
+        visibility_score=_vis_f,
+        visibility_label=bucket_label(int(_vis_f)),
+        credibility_score=_cred_f,
+        credibility_label=bucket_label(int(_cred_f)),
         citation_score=round(float(citation_score or 0), 1),
-        indexability_score=round(float(indexability_score or 0), 1),
+        indexability_score=_idx_f,
+        indexability_label=bucket_label(int(_idx_f)),
         # ── branding ──
         brand_name=brand_name or _brand_name(report.domain, getattr(report.crawl_signals, 'title', ''), getattr(report.crawl_signals, 'meta_description', '')),
         brand_slogan=brand_slogan or "Answer Engine Optimization Audit",
